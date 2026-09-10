@@ -2,7 +2,7 @@
 
 # dsh-automode ⚡
 
-**面向 DeepSeek Harness 的 Claude Code 风格自动模式：让 agent 放手自主执行，同时由确定性护栏 + 低成本复审模型把危险操作挡在执行之前。**
+**面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Claude Code 风格自动模式：让 agent 放手自主执行，同时由确定性护栏 + 低成本复审模型把危险操作挡在执行之前。**
 
 > 🌐 **简体中文**: [README.zh.md](./README.zh.md) · **English**: [README.md](./README.md)
 
@@ -31,7 +31,7 @@ dsh-automode 是护栏插件，介于 agent 与 harness 之间，在**每次工�
 - 📜 **完整审计轨迹** —— 每次 allow / deny / bridge 决定都追加到 `~/.dsh/auto-mode/decisions.jsonl`。
 - 🔌 **原生预设** —— 权限选择器一键开启或 `/auto`；与只读 / workspace-write / danger-full-access 并存。
 
-> ⚠️ **它不是沙箱**。插件运行在 DSH 进程内，蓄意恶意的插件可以做你用户账户能做的任何事。它用于降低不安全的自主工具使用，而不是 OS 安全边界。
+> ⚠️ **它不是沙箱**。插件运行在 [DSH](https://github.com/deepseek-ai/deepseek-harness) 进程内，蓄意恶意的插件可以做你用户账户能做的任何事。它用于降低不安全的自主工具使用，而不是 OS 安全边界。
 
 ## 📚 目录
 
@@ -255,8 +255,15 @@ src/
 
 ## 兼容性与贡献
 
-- **需要 dsh ≥ 0.1.5-rc.1（v0.11.2）**。权限事实（预设 / 沙箱 / 审批策略）改为从持久的 `permissions` 会话投影读取。dsh 0.1.5-rc.1 移除了旧版读取的 `session.events` 访问器——该变更后，每个 auto-mode 回合都会在组装系统提示时报 `Cannot read properties of undefined (reading 'length')`。仍暴露事件日志的旧内核走回退路径，继续可用。
-- **仅在 macOS 上验证**。已针对 macOS 文件系统、DeepSeek Harness（DSH）运行时与开发时使用的 DSH 版本做过测试。路径语义——包括 macOS 的 `/tmp` → `/private/tmp` 软链（由 realpath 最近祖先解析处理）与工作区路径信任——**尚未在 Linux / Windows 上验证**，deny 模式与路径匹配在这些平台上可能有差异。
+**支持的 dsh 版本：`0.1.0-rc.6` – `0.1.x`**（peer 范围 `>=0.1.0-rc.6 <0.2.0`）。权限事实（预设 / 沙箱 / 审批策略）经两条自动探测的读取路径获取：
+
+| dsh 版本 | 权限读取路径 |
+|---|---|
+| `0.1.0-rc.6` – `0.1.4.x` | `session.events` 事件日志（`effectivePermissionPreset` 等） |
+| `≥ 0.1.5-rc.1` | 持久的 `permissions` 会话投影（`ctx.sessionProjections.stateOf`） |
+
+dsh `0.1.5-rc.1` 移除了 `session.events` 访问器——没有投影路径时，每个 auto-mode 回合都会在组装系统提示时报 `Cannot read properties of undefined (reading 'length')`（v0.11.2 修复）。**dsh `≥ 0.2.0` 尚未验证**——只有对新内核实测通过后才应上调 peer 范围。
+- **仅在 macOS 上验证**。已针对 macOS 文件系统、[DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 运行时与开发时使用的 DSH 版本做过测试。路径语义——包括 macOS 的 `/tmp` → `/private/tmp` 软链（由 realpath 最近祖先解析处理）与工作区路径信任——**尚未在 Linux / Windows 上验证**，deny 模式与路径匹配在这些平台上可能有差异。
 - **发现 bug，或其它平台上有问题？** 欢迎提交 issue 或 PR：[github.com/log-li/dsh-automode](https://github.com/log-li/dsh-automode)。
 
 ## 许可证

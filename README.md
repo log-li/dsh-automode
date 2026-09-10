@@ -2,7 +2,7 @@
 
 # dsh-automode ⚡
 
-**Claude Code–style auto mode for DeepSeek Harness** — let your agent run hands-free, while a deterministic guardrail and a cost-aware reviewer keep the dangerous stuff from ever executing.
+**Claude Code–style auto mode for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — let your agent run hands-free, while a deterministic guardrail and a cost-aware reviewer keep the dangerous stuff from ever executing.
 
 > 🌐 **简体中文**: [README.zh.md](./README.zh.md) · **English**: [README.md](./README.md)
 
@@ -31,7 +31,7 @@ dsh-automode sits between your agent and the harness. It intercepts every tool c
 - 📜 **Full audit trail** — every allow / deny / bridge decision is appended to `~/.dsh/auto-mode/decisions.jsonl`.
 - 🔌 **Native preset** — flip it on from the permission picker or `/auto`; it plays nicely alongside read-only / workspace-write / danger-full-access.
 
-> ⚠️ **Not a sandbox.** The plugin runs inside the DSH process; a deliberately malicious plugin can do anything your user account can do. It reduces unsafe autonomous tool use — it is not an OS security boundary.
+> ⚠️ **Not a sandbox.** The plugin runs inside the [DSH](https://github.com/deepseek-ai/deepseek-harness) process; a deliberately malicious plugin can do anything your user account can do. It reduces unsafe autonomous tool use — it is not an OS security boundary.
 
 ## 📚 Table of contents
 
@@ -255,8 +255,15 @@ src/
 
 ## Compatibility & contributions
 
-- **dsh ≥ 0.1.5-rc.1 (v0.11.2).** Permission facts (preset / sandbox / approval) are read from the durable `permissions` session projection. dsh 0.1.5-rc.1 removed the `session.events` accessor earlier releases read — after that change every auto-mode turn died with `Cannot read properties of undefined (reading 'length')` while the system prompt was assembled. Older cores that still expose the event log keep working through a fallback path.
-- **Verified on macOS only.** Tested against the macOS filesystem, the DeepSeek Harness (DSH) runtime, and the DSH version in use at development time. Path semantics — including the macOS `/tmp` → `/private/tmp` symlink (handled by realpath-nearest-ancestor resolution) and workspace-path trust — have **not** been verified on Linux or Windows, and deny-pattern/path matching may differ there.
+**Supported dsh versions: `0.1.0-rc.6` – `0.1.x`** (peer range `>=0.1.0-rc.6 <0.2.0`). Permission facts (preset / sandbox / approval) are read through two auto-detected paths:
+
+| dsh version | permission read path |
+|---|---|
+| `0.1.0-rc.6` – `0.1.4.x` | `session.events` event log (`effectivePermissionPreset` & co.) |
+| `≥ 0.1.5-rc.1` | durable `permissions` session projection (`ctx.sessionProjections.stateOf`) |
+
+dsh `0.1.5-rc.1` removed the `session.events` accessor — without the projection path every auto-mode turn died with `Cannot read properties of undefined (reading 'length')` while the system prompt was assembled (fixed in v0.11.2). **dsh `≥ 0.2.0` is not yet verified** — bump the peer range only after testing against a new core.
+- **Verified on macOS only.** Tested against the macOS filesystem, the [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) runtime, and the DSH version in use at development time. Path semantics — including the macOS `/tmp` → `/private/tmp` symlink (handled by realpath-nearest-ancestor resolution) and workspace-path trust — have **not** been verified on Linux or Windows, and deny-pattern/path matching may differ there.
 - **Found a bug, or an issue on another platform?** Bug reports and pull requests are welcome — open an issue or PR at [github.com/log-li/dsh-automode](https://github.com/log-li/dsh-automode).
 
 ## License
