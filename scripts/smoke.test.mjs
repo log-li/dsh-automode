@@ -222,18 +222,23 @@ test('user message carries transcript and action', () => {
 });
 
 console.log('auto mode state (index.js)');
-function makeAutoHarness({ withService = true, preset, approval } = {}) {
+function makeAutoHarness({ withService = true, preset, approval, legacyEvents = true, projections = true } = {}) {
   const events = [];
   if (preset !== undefined) events.push({ type: 'permission/preset', data: { preset } });
   if (approval !== undefined) events.push({ type: 'approval/policy', data: { policy: approval } });
   const session = {
-    get events() {
-      return events;
-    },
     append(type, data) {
       events.push({ type, data });
     },
   };
+  // dsh <= 0.1.1-rc.2 exposes the durable log as `session.events`.
+  if (legacyEvents) {
+    Object.defineProperty(session, 'events', {
+      get() {
+        return events;
+      },
+    });
+  }
   const injected = [];
   const agent = {
     session,
@@ -256,16 +261,50 @@ function makeAutoHarness({ withService = true, preset, approval } = {}) {
     },
     approval: { config: { policy: 'ask' } },
   };
+  // dsh >= 0.1.5-rc.1 reads the durable `permissions` session projection instead.
+  if (projections) {
+    ctx.sessionProjections = {
+      stateOf(target, key) {
+        if (key !== 'permissions' || target !== session) return undefined;
+        let presetValue = null;
+        let sandbox = null;
+        let approvalValue = null;
+        for (const event of events) {
+          if (event.type === 'permission/preset') presetValue = event.data.preset;
+          if (event.type === 'sandbox/mode') sandbox = event.data.mode;
+          if (event.type === 'approval/policy') approvalValue = event.data.policy;
+        }
+        return { preset: presetValue, sandbox, approval: approvalValue };
+      },
+    };
+  }
   return { events, session, agent, injected, ctx, service };
 }
 
 test('isAuto follows the last permission/preset value', () => {
-  const { session } = makeAutoHarness({ preset: 'auto-mode' });
-  assert.equal(isAuto(session), true);
+  const { session, ctx } = makeAutoHarness({ preset: 'auto-mode' });
+  assert.equal(isAuto(ctx, session), true);
   session.append('permission/preset', { preset: 'read-only' });
-  assert.equal(isAuto(session), false);
+  assert.equal(isAuto(ctx, session), false);
   session.append('permission/preset', { preset: 'auto-mode' });
-  assert.equal(isAuto(session), true);
+  assert.equal(isAuto(ctx, session), true);
+});
+
+test('isAuto reads the permissions projection on dsh 0.1.5-rc.1 (no session.events)', () => {
+  // Regression: 0.1.5-rc.1 removed `session.events` (reads yield undefined).
+  // The old effectivePermissionPreset(session.events) call threw
+  // "Cannot read properties of undefined (reading 'length')" during
+  // systemPrompt.assemble() → agent/pre-step, killing every turn.
+  const { session, ctx } = makeAutoHarness({ preset: 'auto-mode', legacyEvents: false });
+  assert.equal(session.events, undefined);
+  assert.equal(isAuto(ctx, session), true);
+  session.append('permission/preset', { preset: 'read-only' });
+  assert.equal(isAuto(ctx, session), false);
+});
+
+test('isAuto falls back to the event log on pre-0.1.5 cores', () => {
+  const { session, ctx } = makeAutoHarness({ preset: 'auto-mode', projections: false });
+  assert.equal(isAuto(ctx, session), true);
 });
 
 test('writeAutoMode uses the public permissionPresets.set path', () => {

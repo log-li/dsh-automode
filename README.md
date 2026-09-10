@@ -255,6 +255,7 @@ src/
 
 ## Compatibility & contributions
 
+- **dsh ≥ 0.1.5-rc.1 (v0.11.2).** Permission facts (preset / sandbox / approval) are read from the durable `permissions` session projection. dsh 0.1.5-rc.1 removed the `session.events` accessor earlier releases read — after that change every auto-mode turn died with `Cannot read properties of undefined (reading 'length')` while the system prompt was assembled. Older cores that still expose the event log keep working through a fallback path.
 - **Verified on macOS only.** Tested against the macOS filesystem, the DeepSeek Harness (DSH) runtime, and the DSH version in use at development time. Path semantics — including the macOS `/tmp` → `/private/tmp` symlink (handled by realpath-nearest-ancestor resolution) and workspace-path trust — have **not** been verified on Linux or Windows, and deny-pattern/path matching may differ there.
 - **Found a bug, or an issue on another platform?** Bug reports and pull requests are welcome — open an issue or PR at [github.com/log-li/dsh-automode](https://github.com/log-li/dsh-automode).
 

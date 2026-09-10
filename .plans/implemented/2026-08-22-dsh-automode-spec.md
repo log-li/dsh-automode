@@ -387,3 +387,38 @@ decision           write  outcome=rejected  reason="escalate sandbox to danger-f
 
 
 
+
+---
+
+## dsh 0.1.5-rc.1 兼容修复（2026-09-10，v0.11.2）
+
+### 现象
+
+- dsh 升级到 **0.1.5-rc.1** 后，auto-mode 会话**每条**消息都失败：UI 显示「本轮运行失败」，会话记录 `turn/start → turn/end {kind:error, message:"Cannot read properties of undefined (reading 'length')"}`。
+- 对照：同一内核跑 **headless profile 正常**；关掉 auto-mode 后 web 也正常。
+
+### 根因（实测堆栈定位）
+
+- dsh 0.1.5-rc.1 **移除了 `session.events`** 访问器（读取得到 `undefined`）。auto-mode 有 6 处仍读它：`src/index.ts` 5 处（`isAuto` / `policyOf` / `writeAutoModeKnobs` / `auto-status`）+ `src/pre-execute.ts` 1 处（预设闸门）。
+- 因为插件自带 `@deepseek-ai/*` 副本（`dsh-permission-presets@0.1.0-rc.8`），旧 helper `effectivePermissionPreset` 仍能 import → **加载期不报错**，只在运行时炸：`effectivePermissionPreset(session.events)` → `events.length`（events 为 `undefined`）。
+- 触发点在**系统提示渲染**：auto-mode 注册 `systemPrompt.context('approval:policy')`，其 `text()` → `policyOf()` → `isAuto()`；该 context 在 `agent/pre-step` 的 `systemPrompt.assemble()` 中被调用 → 整个回合在模型请求前就抛错 → **每条消息必死**。
+- 实测堆栈：
+  `effectivePermissionPreset (…/dsh-permission-presets/lib/index.js:33)` ← `isAuto` ← `policyOf` ← `Object.text`（auto-mode 的 `approval:policy` context）← `Proxy.assemble`（`dsh-system-prompt`）← `ReactLoopAgent.preStep`（`dsh-agent-loop`）。
+
+### 修复
+
+- 新增 `src/permission-state.ts`：`permissionSnapshot(ctx, session)`
+  - 首选 **`ctx.sessionProjections.stateOf(session, 'permissions')`**（0.1.5+ 的持久投影，与内核 `dsh-permission-presets.current()` 同源）→ `preset` / `sandbox` / `approval`。
+  - 回退：仍暴露事件日志的旧内核走 `effectivePermissionPreset` / `effectiveSandboxMode` / `effectiveApprovalPolicy(session.events)`。
+- `src/index.ts`：`isAuto` / `policyOf` 改为显式接收 `ctx`（全部调用点本就有 ctx）；`writeAutoModeKnobs` / `auto-status` 改用 `permissionSnapshot`；`inject` 增加 `sessionProjections`。
+- `src/pre-execute.ts`：预设闸门改用 `permissionSnapshot(ctx, session).preset`。
+- 语义保持：`writeAutoModeKnobs` 的 sandbox 比较仍用投影原始值（与旧 `effectiveSandboxMode(events)` 一致，未引入「全局沙箱模式」回退）；approval 仍按 `state.approval ?? ctx.approval.config.policy ?? 'ask'` 回退。
+
+### 验证
+
+- `npm run typecheck` / `npm run build` 通过；`npm test` **62 项全过**（新增 2 条回归：① 「无 `session.events` 的 0.1.5 形态下 `isAuto` 仍正确」——即原 bug 的最小复现用例；② 旧内核走事件日志回退）。
+- E2E：auto-mode **保持开启**，对运行中的 dsh web 发消息 → `turn/end → {kind:"completed"}`（修复前必报 `reading 'length'`）。
+
+### 版本
+
+- 0.11.1 → **0.11.2**（bug 修复：dsh 0.1.5-rc.1 移除 `session.events` 导致 auto-mode 每个回合在 pre-step 崩溃）。README(en/zh) 兼容性段落同步。

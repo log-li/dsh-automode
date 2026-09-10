@@ -255,6 +255,7 @@ src/
 
 ## 兼容性与贡献
 
+- **需要 dsh ≥ 0.1.5-rc.1（v0.11.2）**。权限事实（预设 / 沙箱 / 审批策略）改为从持久的 `permissions` 会话投影读取。dsh 0.1.5-rc.1 移除了旧版读取的 `session.events` 访问器——该变更后，每个 auto-mode 回合都会在组装系统提示时报 `Cannot read properties of undefined (reading 'length')`。仍暴露事件日志的旧内核走回退路径，继续可用。
 - **仅在 macOS 上验证**。已针对 macOS 文件系统、DeepSeek Harness（DSH）运行时与开发时使用的 DSH 版本做过测试。路径语义——包括 macOS 的 `/tmp` → `/private/tmp` 软链（由 realpath 最近祖先解析处理）与工作区路径信任——**尚未在 Linux / Windows 上验证**，deny 模式与路径匹配在这些平台上可能有差异。
 - **发现 bug，或其它平台上有问题？** 欢迎提交 issue 或 PR：[github.com/log-li/dsh-automode](https://github.com/log-li/dsh-automode)。
 
