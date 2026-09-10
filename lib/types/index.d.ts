@@ -19,6 +19,6 @@ import { Config } from './config.js';
 export declare const name = "dsh-automode";
 export { Config };
 export declare const inject: string[];
-export declare function isAuto(session: Session): boolean;
+export declare function isAuto(session: Session, ctx?: Context): boolean;
 export declare function writeAutoMode(ctx: Context, agent: Agent): void;
 export declare function apply(ctx: Context, rawConfig: unknown): void;

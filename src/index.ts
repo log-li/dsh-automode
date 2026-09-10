@@ -17,17 +17,15 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { Session } from '@deepseek-ai/dsh-session';
 import {
-  effectiveApprovalPolicy,
   setApprovalPolicy,
   type ApprovalOutcome,
   type ApprovalPolicy,
   type ApprovalRequest,
 } from '@deepseek-ai/dsh-user-approval';
 import {
-  effectiveSandboxMode,
   setSandboxMode,
 } from '@deepseek-ai/dsh-sandbox-policy';
-import { effectivePermissionPreset } from '@deepseek-ai/dsh-permission-presets';
+import { permissionPreset, approvalPolicy, sandboxMode, hasLegacyPermissionFolds } from './permissions.js';
 
 import { Config, type ConfigType, expandDefaults } from './config.js';
 import { classifyBand, compileRegex, compileGlob, bashCommandOf } from './bands.js';
@@ -96,31 +94,32 @@ const ALLOWLIST_SENTENCE =
 
 // ---- Helpers ----
 
-export function isAuto(session: Session): boolean {
-  return effectivePermissionPreset(session.events) === AUTO_MODE_PRESET;
+export function isAuto(session: Session, ctx?: Context): boolean {
+  return permissionPreset(ctx, session) === AUTO_MODE_PRESET;
 }
 
-function policyOf(session: Session): ApprovalPolicy | 'auto' | undefined {
-  return isAuto(session) ? 'auto' : effectiveApprovalPolicy(session.events);
+function policyOf(ctx: Context, session: Session): ApprovalPolicy | 'auto' | undefined {
+  return isAuto(session, ctx) ? 'auto' : approvalPolicy(ctx, session);
 }
 
 function writeAutoModeKnobs(ctx: Context, session: Session): void {
-  const events = session.events;
-  if (effectivePermissionPreset(events) !== AUTO_MODE_PRESET) {
+  if (!hasLegacyPermissionFolds()) throw new Error('dsh-automode: permissionPresets.set is required on this host');
+  if (permissionPreset(ctx, session) !== AUTO_MODE_PRESET) {
     session.append('permission/preset', { preset: AUTO_MODE_PRESET });
   }
-  if (effectiveSandboxMode(events) !== AUTO_SANDBOX) {
+  if (sandboxMode(ctx, session) !== AUTO_SANDBOX) {
     setSandboxMode(session, AUTO_SANDBOX);
   }
-  const current = effectiveApprovalPolicy(events) ?? ctx.approval.config.policy ?? 'ask';
+  const current = approvalPolicy(ctx, session) ?? ctx.approval.config.policy ?? 'ask';
   if (current !== 'ask') setApprovalPolicy(session, 'ask');
 }
 
 export function writeAutoMode(ctx: Context, agent: Agent): void {
-  if (isAuto(agent.session)) return;
+  if (isAuto(agent.session, ctx)) return;
   const service = ctx.get('permissionPresets') as { set(s: Session, n: string): void } | undefined;
   if (service) {
-    try { service.set(agent.session, AUTO_MODE_PRESET); } catch {
+    try { service.set(agent.session, AUTO_MODE_PRESET); } catch (error) {
+      if (!hasLegacyPermissionFolds()) throw error;
       writeAutoModeKnobs(ctx, agent.session);
     }
   } else {
@@ -373,7 +372,12 @@ export function apply(ctx: Context, rawConfig: unknown): void {
 
   // --- 2. Approval answerer ---
   ctx.on('approval/request', (req, next) => {
-    if (!isAuto(req.agent.session)) return next();
+    try {
+      if (!isAuto(req.agent.session, ctx)) return next();
+    } catch (error) {
+      logger.warn(`cannot determine permission preset: ${String(error)}`);
+      return Promise.resolve('rejected' as const);
+    }
     const sid = String(req.agent.session.id ?? '?');
 
     // Breaker tripped → delegate to human. A human allow OR reject is an
@@ -417,7 +421,7 @@ export function apply(ctx: Context, rawConfig: unknown): void {
           name: 'approval:policy',
           order: 115,
           text: () => {
-            const policy = policyOf(agent.session) ?? 'ask';
+            const policy = policyOf(ctx, agent.session) ?? 'ask';
             if (policy === 'auto') return AUTO_SENTENCE;
             return policy === 'never' ? NEVER_SENTENCE : ASK_SENTENCE;
           },
@@ -425,7 +429,7 @@ export function apply(ctx: Context, rawConfig: unknown): void {
         agentScope.systemPrompt.context({
           name: 'auto-mode:allowlist',
           order: 116,
-          text: () => (isAuto(agent.session) ? ALLOWLIST_SENTENCE : ''),
+          text: () => (isAuto(agent.session, ctx) ? ALLOWLIST_SENTENCE : ''),
         });
       });
     });
@@ -437,7 +441,7 @@ export function apply(ctx: Context, rawConfig: unknown): void {
       name: 'auto',
       description: 'Switch this session to auto mode.',
       handler: ({ agent }: { agent: Agent }) => {
-        if (isAuto(agent.session)) return { kind: 'success' as const, text: 'Already in auto mode.' };
+        if (isAuto(agent.session, ctx)) return { kind: 'success' as const, text: 'Already in auto mode.' };
         writeAutoMode(ctx, agent);
         return { kind: 'success' as const, text: 'Auto mode enabled.' };
       },
@@ -446,9 +450,9 @@ export function apply(ctx: Context, rawConfig: unknown): void {
       name: 'auto-status',
       description: 'Show auto-mode diagnostics.',
       handler: ({ agent }: { agent: Agent }) => {
-        const auto = isAuto(agent.session);
-        const preset = effectivePermissionPreset(agent.session.events);
-        const approval = effectiveApprovalPolicy(agent.session.events) ?? ctx.approval.config.policy ?? 'ask';
+        const auto = isAuto(agent.session, ctx);
+        const preset = permissionPreset(ctx, agent.session);
+        const approval = approvalPolicy(ctx, agent.session) ?? ctx.approval.config.policy ?? 'ask';
         const b = breaker.get(String(agent.session.id ?? '?'));
         return {
           kind: 'success' as const,

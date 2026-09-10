@@ -25,6 +25,7 @@ import { join } from 'node:path';
 // Redirect the decision log BEFORE any appendDecision call (os.homedir is
 // only read lazily inside appendDecision, so a fresh temp HOME is honored).
 process.env.HOME = mkdtempSync(join(tmpdir(), 'dsh-automode-bridge-'));
+if (process.platform === 'win32') process.env.USERPROFILE = process.env.HOME;
 
 const { apply } = await import('../lib/index.js');
 

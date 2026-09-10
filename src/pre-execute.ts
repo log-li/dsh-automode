@@ -23,7 +23,7 @@ import { AllowPathBridge } from './bridge.js';
 import { classifyTwoStage, renderUserIntent, resolveRoute, type Verdict } from './classifier.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from './prompt.js';
 import { expandDefaults } from './config.js';
-import { effectivePermissionPreset } from '@deepseek-ai/dsh-permission-presets';
+import { permissionPreset } from './permissions.js';
 import { appendDecision } from './log.js';
 import { realpathSync } from 'node:fs';
 import { resolve, sep, join, dirname, basename } from 'node:path';
@@ -188,7 +188,14 @@ export function registerPreExecute(
       // In other presets (read-only / workspace-write / danger-full-access),
       // the auto-mode pre-execute gate is a no-op so it does not contradict
       // the user's chosen sandbox — e.g. "full access" must not be denied here.
-      if (effectivePermissionPreset(session.events) !== 'auto-mode') {
+      let preset: string | undefined;
+      try {
+        preset = permissionPreset(ctx, session);
+      } catch (error) {
+        logger.warn(`cannot determine permission preset: ${String(error)}`);
+        return { kind: 'deny', reason: `dsh-automode: cannot determine permission preset: ${String(error)}` };
+      }
+      if (preset !== 'auto-mode') {
         return next();
       }
 

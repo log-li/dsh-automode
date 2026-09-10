@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { findAllowRule, findDenyRule, isAllowlisted, patternMatches } from '../lib/rules.js';
 import { parseVerdict, renderTranscript, renderUserIntent } from '../lib/classifier.js';
 import { buildSystemPrompt, buildUserMessage } from '../lib/prompt.js';
@@ -443,22 +443,22 @@ test('cd is a tracked benign navigator (not an invalidator), plus git write-reso
   // destination is the repository root resolved from the `cd` (or `-C`) context.
   assert.deepEqual(
     bashWriteDestinations('cd /Users/logan/.agents && git add skills/a.md && git commit -m "m"'),
-    ['/Users/logan/.agents'],
+    [resolve('/Users/logan/.agents')],
   );
   assert.deepEqual(
     bashWriteDestinations('cd /Users/logan/.agents && git add -A && git commit -q -m "x"'),
-    ['/Users/logan/.agents'],
+    [resolve('/Users/logan/.agents')],
   );
   assert.deepEqual(
     bashWriteDestinations('cd /Users/logan/.agents && git push origin main 2>&1 | tail -3'),
-    ['/Users/logan/.agents'],
+    [resolve('/Users/logan/.agents')],
   );
-  assert.deepEqual(bashWriteDestinations('git -C /Users/logan/.agents add .'), ['/Users/logan/.agents']);
-  assert.deepEqual(bashWriteDestinations('git add .', '/Users/logan/.agents'), ['/Users/logan/.agents']);
+  assert.deepEqual(bashWriteDestinations('git -C /Users/logan/.agents add .'), [resolve('/Users/logan/.agents')]);
+  assert.deepEqual(bashWriteDestinations('git add .', '/Users/logan/.agents'), [resolve('/Users/logan/.agents')]);
   // `-C ~/…` normalizes `~` to the absolute repo root (HOME expansion).
   assert.deepEqual(
     bashWriteDestinations('git -C ~/.agents add .'),
-    [join(process.env.HOME, '.agents')],
+    [resolve(process.env.HOME || '/', '.agents')],
   );
   // history-rewrite / deletion git commands are NOT allowPath-trusted.
   assert.deepEqual(bashWriteDestinations('git reset --hard HEAD'), []);
