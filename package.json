@@ -25,7 +25,8 @@
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "CHANGELOG.zh.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
