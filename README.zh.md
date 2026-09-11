@@ -235,7 +235,14 @@ node scripts/audit.mjs                  # 报告 + 矛盾对哨兵
 node scripts/audit.mjs --fail-on-pairs --limit 500  # 存在矛盾对即 exit 1——CI/cron 建议配 `--limit` 滚动窗口
 ```
 
-## 系统提示影子化
+## 贡献者（Contributors）
+
+感谢所有为 @log.li/dsh-automode 做出贡献的人：
+
+| 贡献者 | 贡献 |
+|---|---|
+| @WSL043 | 💻 权限兼容层 namespace-probe 思路（[PR #2](https://github.com/log-li/dsh-automode/pull/2)，共同署名） |
+| @xiaolinziwang | 🐛 bug 报告（[issue #1](https://github.com/log-li/dsh-automode/issues/1)） |
 
 当 auto 模式激活时，插件会"影子化"审批策略的系统提示，让模型看到 "auto" 而不是 "ask"。这告诉模型：工具拒绝来自自动化审查者，而非人类。模型会相应调整重试策略（尝试更小/更安全动作，而不是问用户）。
 
