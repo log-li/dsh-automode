@@ -2,7 +2,7 @@
 
 All notable changes to **@log.li/dsh-automode** since the previous release (0.12.0).
 
-## [0.14.4] — unreleased
+## [0.14.4] — 2026-09-12
 
 ### Fixed (independent glm-5.3-flash review, decisions recorded in spec)
 - **Deny-scan parity between enforcement points**: the approval path scanned FULL args (document content) while the gate scanned only target paths — a whitelisted write whose body mentioned a sensitive word was wrongly denied, breaking the zero-review allowPath contract and mis-firing the contradiction-pair sentinel. Shared `denyHaystackFor()` (file tools → paths only; bash → command text) now backs both gate and approval.

@@ -2,7 +2,7 @@
 
 **@log.li/dsh-automode** 自上次发布（0.12.0）以来的全部变更。
 
-## [0.14.4] — 未发布（unreleased）
+## [0.14.4] — 2026-09-12
 
 ### 修复（独立 glm-5.3-flash review 检出，决策见 spec）
 - **两道防线 deny 扫描一致**：approval 路径曾扫全量 args（含文件内容），gate 只扫目标路径——白名单写入正文含敏感词会被误拒，破坏零评审契约并让矛盾对哨兵误报。共享 `denyHaystackFor()`（文件工具→仅路径、bash→命令文本）现同时支撑 gate 与 approval。
