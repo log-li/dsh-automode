@@ -10,12 +10,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findAllowRule, findDenyRule, isAllowlisted, patternMatches } from '../lib/rules.js';
 import { parseVerdict, renderTranscript, renderUserIntent, restoreToolCallArgs } from '../lib/classifier.js';
-import { buildSystemPrompt, buildUserMessage } from '../lib/prompt.js';
+import { buildSystemPrompt, buildUserMessage, promptInputOf } from '../lib/prompt.js';
 import { isAuto, writeAutoMode } from '../lib/index.js';
 import { Breaker } from '../lib/breaker.js';
 import { VerdictCache, hashString } from '../lib/cache.js';
 import { AllowPathBridge } from '../lib/bridge.js';
-import { tokenizeShell, bashWriteDestinations } from '../lib/bands.js';
+import { tokenizeShell, bashWriteDestinations, denyHaystackFor, isFileTool, collectPaths } from '../lib/bands.js';
 import { isInsideTrusted } from '../lib/pre-execute.js';
 
 let passed = 0;
@@ -503,6 +503,40 @@ test('bash command subject wins; path fields ignored for bash; path-less args fa
   assert.equal(VerdictCache.sig('bash', 'x', undefined), VerdictCache.sig('bash', 'x', null));
 });
 
+console.log('v0.14.4 review regressions (deny haystack parity, paths, dirs collision, file-tool sig parity)');
+test('denyHaystackFor: file tools scan PATHS only — content never enters the deny haystack', () => {
+  const deny = /credentials/;
+  // a doc whose CONTENT mentions the word is NOT a leak (v0.11.1 design)
+  assert.equal(deny.test(denyHaystackFor('edit', { file_path: '/safe/doc.md', content: 'has credentials inside' }, '')), false);
+  // a sensitive TARGET path IS scanned
+  assert.equal(deny.test(denyHaystackFor('edit', { file_path: '/keys/credentials.txt' }, '')), true);
+  // bash scans the command text
+  assert.equal(deny.test(denyHaystackFor('bash', {}, 'cat credentials')), true);
+  // and the shape matches what the gate hand-built: `tool\n<paths joined>`
+  assert.ok(denyHaystackFor('edit', { file_path: '/a/x', path: '/b' }, '').startsWith('edit\n/a/x\n/b'));
+});
+test('PromptInput.paths reaches the classifier user message (escalated file-tool targets)', () => {
+  const withPaths = buildUserMessage(promptInputOf({ toolName: 'write', reason: 'r', paths: ['/etc/hosts'] }, [], [], []), '');
+  assert.ok(withPaths.includes('target paths: /etc/hosts'));
+  const without = buildUserMessage(promptInputOf({ toolName: 'write', reason: 'r' }, [], [], []), '');
+  assert.ok(!without.includes('target paths'));
+});
+test('toolArgsKey: JSON-serialized dirs cannot collide ({/a,b} set vs single "/a,b" dir)', () => {
+  const twoDirs = VerdictCache.sig('write', 'r', { file_path: ['/a/x', 'b/y'] }); // dirs {/a, b}
+  const oneDir = VerdictCache.sig('write', 'r', { file_path: '/a,b/x' }); // dirs {/a,b}
+  assert.notEqual(twoDirs, oneDir);
+});
+test('file-tool sig parity: identical reason+args match, divergent approval reason misses (review #5 coupling)', () => {
+  const intent = hashString('u');
+  const base = { file_path: '/x/OneDrive/a.md', sandbox_permissions: 'danger-full-access' };
+  const gate = VerdictCache.sig('write', 'escalate sandbox to danger-full-access: export docs', base, 200, intent);
+  assert.equal(VerdictCache.sig('write', 'escalate sandbox to danger-full-access: export docs', base, 200, intent), gate);
+  // the coupling review #5 warns about: a DIFFERENT approval justification →
+  // miss. Documented, not "fixed" — the host's approveEscalation template must
+  // stay byte-identical to the gate's escReason for file tools.
+  assert.notEqual(VerdictCache.sig('write', 'some other justification', base, 200, intent), gate);
+});
+
 console.log('bands.js (bashWriteDestinations)');
 test('cp/mv destination is the last positional', () => {
   assert.deepEqual(
@@ -767,6 +801,9 @@ test('distinguishes config problems from transient failures', () => {
   assert.equal(classifyFailureCategory('server returned 529'), 'transient:overload');
   assert.equal(classifyFailureCategory('socket hang up, econnreset'), 'transient:connection');
   assert.equal(classifyFailureCategory('the model output was empty'), 'unknown');
+  // v0.14.4: the bare "reasoning effort" substring no longer misfires
+  assert.equal(classifyFailureCategory("provider reported a reasoning effort metric of 3"), 'unknown');
+  assert.equal(classifyFailureCategory('does not support reasoning effort "off"'), 'config:unsupported-effort');
 });
 
 console.log(`\nall ${passed} smoke tests passed`);

@@ -14,6 +14,14 @@ export interface PromptInput {
      * approval-path decision as well-informed as the pre-execute gate's.
      */
     readonly command?: string;
+    /**
+     * Target paths for FILE tools (v0.14.4, review #2). Escalated file-tool
+     * calls carry no `command`, so without this the classifier judged an
+     * escalation from the justification prose alone and never saw WHICH file was
+     * going to be written. Both enforcement points feed the same paths (gate:
+     * targetPaths; approval: recovered args), keeping the verdict inputs aligned.
+     */
+    readonly paths?: readonly string[];
 }
 /**
  * Build the system prompt: safety monitor role + operator rules + decision
@@ -30,4 +38,5 @@ export declare function promptInputOf(req: {
     reason?: string;
     userIntent?: string;
     command?: string;
+    paths?: readonly string[];
 }, allowRules: readonly string[], denyRules: readonly string[], environmentFacts: readonly string[]): PromptInput;

@@ -232,7 +232,7 @@ routine 类别（install/build/test/文件编辑/git add/commit/status）只是*
 
 ```bash
 node scripts/audit.mjs                  # 报告 + 矛盾对哨兵
-node scripts/audit.mjs --fail-on-pairs  # 存在矛盾对时 exit 1（CI/cron 告警）
+node scripts/audit.mjs --fail-on-pairs --limit 500  # 存在矛盾对即 exit 1——CI/cron 建议配 `--limit` 滚动窗口
 ```
 
 ## 系统提示影子化

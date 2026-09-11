@@ -25,7 +25,7 @@ import * as sandboxPolicyModule from '@deepseek-ai/dsh-sandbox-policy';
 
 import { Config, type ConfigType, expandDefaults } from './config.js';
 import { permissionSnapshot } from './permission-state.js';
-import { classifyBand, compileRegex, compileGlob, bashCommandOf } from './bands.js';
+import { classifyBand, compileRegex, compileGlob, bashCommandOf, isFileTool, collectPaths } from './bands.js';
 import { findAllowRule, findDenyRule, isAllowlisted } from './rules.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from './prompt.js';
 import {
@@ -111,7 +111,7 @@ export function probeSetter(module: unknown, name: string): ((...args: unknown[]
 /** Setters resolved at load time; undefined when the host removed the export. */
 const setApprovalPolicy = probeSetter(userApprovalModule, 'setApprovalPolicy');
 const setSandboxMode = probeSetter(sandboxPolicyModule, 'setSandboxMode');
-let setterMissingWarned = false;
+const missingSettersWarned = new Set<string>();
 
 function writeAutoModeKnobs(ctx: Context, session: Session): void {
   const state = permissionSnapshot(ctx, session);
@@ -131,8 +131,8 @@ function writeAutoModeKnobs(ctx: Context, session: Session): void {
 
 /** Degrade, never crash, when the host removed a permission setter (issue #1). */
 function warnSetterMissing(ctx: Context, name: string): void {
-  if (setterMissingWarned) return;
-  setterMissingWarned = true;
+  if (missingSettersWarned.has(name)) return;
+  missingSettersWarned.add(name);
   ctx.logger('auto-mode').warn(
     `dsh-automode: host removed the "${name}" export — that auto-mode knob will not be set (degraded mode). ` +
     'Consider a host that still exports the permission setters.',
@@ -314,9 +314,17 @@ async function decideAuto(
   // v0.13.0: pass the recovered command text to the approval-path classifier —
   // it previously saw only the justification prose, and picked stale reasons
   // from old context (the amplifier behind the cache-miss double classification).
+  // v0.14.4: file tools additionally pass their recovered target paths so the
+  // approval classifier sees which file an escalated write targets.
   const commandText = bashCommandOf(args);
   const input = promptInputOf(
-    { toolName, reason, userIntent, command: commandText || undefined },
+    {
+      toolName,
+      reason,
+      userIntent,
+      command: commandText || undefined,
+      paths: isFileTool(toolName) ? collectPaths(args) : undefined,
+    },
     softAllowRules,
     softDenyRules,
     environmentFacts,

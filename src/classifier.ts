@@ -53,7 +53,7 @@ export type ClassifyFailureCategory =
 export function classifyFailureCategory(detail: string): ClassifyFailureCategory {
   const m = detail.toLowerCase();
   if (/no classifier route/.test(m)) return 'config:no-route';
-  if (/unsupported[\s-]*reasoning[\s-]*effort|reasoning effort/.test(m)) return 'config:unsupported-effort';
+  if (/\bdoes not support reasoning effort\b|unsupported[\s-]*reasoning[\s-]*effort/.test(m)) return 'config:unsupported-effort';
   if (/timed?\s*out|timeout|stalled/.test(m)) return 'transient:timeout';
   if (/rate.?limit|429/.test(m)) return 'transient:rate-limit';
   if (/overload|529/.test(m)) return 'transient:overload';

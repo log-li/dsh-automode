@@ -476,6 +476,51 @@ export function isReadOnlyTool(toolName: string, readOnlyTools: readonly string[
   return readOnlyTools.includes(toolName);
 }
 
+/** Whether the tool name is a file-path tool (targets are paths, not commands). */
+export function isFileTool(name: string): boolean {
+  return ['read', 'write', 'edit', 'glob', 'grep', 'find', 'ls'].includes(name);
+}
+
+/** Collect candidate file/dir path strings from a file-tool call's args. */
+export function collectPaths(args: unknown): string[] {
+  if (!args || typeof args !== 'object') return [];
+  const out: string[] = [];
+  for (const key of ['file_path', 'path', 'dir', 'root', 'pattern']) {
+    const v = (args as Record<string, unknown>)[key];
+    if (typeof v === 'string' && v) out.push(v);
+    else if (Array.isArray(v)) for (const item of v) if (typeof item === 'string') out.push(item);
+  }
+  return out;
+}
+
+/** Collect only definitive filesystem-path argument values (no search patterns).
+ * Used for deny scanning so a grep/glob search term is not mistaken for a target. */
+export function collectDenyPaths(args: unknown): string[] {
+  if (!args || typeof args !== 'object') return [];
+  const out: string[] = [];
+  for (const key of ['file_path', 'path', 'dir', 'root']) {
+    const v = (args as Record<string, unknown>)[key];
+    if (typeof v === 'string' && v) out.push(v);
+    else if (Array.isArray(v)) for (const item of v) if (typeof item === 'string') out.push(item);
+  }
+  return out;
+}
+
+/**
+ * Deny-scan haystack shared by BOTH enforcement points (v0.14.4, review #1).
+ * File tools scan only their TARGET PATHS — document content must NOT be
+ * scanned (v0.11.1 design: mentioning a sensitive filename in prose is not a
+ * leak). Bash scans the command text. Keeps the gate and the approval path
+ * identical so the hard-deny band can never diverge between the two.
+ */
+export function denyHaystackFor(toolName: string, args: unknown, commandText: string): string {
+  if (isFileTool(toolName)) {
+    return `${toolName}\n${collectDenyPaths(args).join('\n')}`;
+  }
+  const argsText = typeof args === 'string' ? args : JSON.stringify(args ?? '');
+  return `${toolName}\n${commandText || argsText}`;
+}
+
 /** Check whether an action matches a deny pattern, an allow pattern, or neither. */
 export function classifyBand(
   toolName: string,
@@ -485,9 +530,8 @@ export function classifyBand(
   allowGlobs: RegExp[],
   readOnlyTools: readonly string[],
 ): { action: 'allow' | 'deny' | 'classify'; tier: string; detail: string } {
-  const argsText = typeof args === 'string' ? args : JSON.stringify(args ?? '');
   const commandText = bashCommandOf(args);
-  const haystack = `${toolName}\n${reason ?? ''}\n${argsText}`;
+  const haystack = denyHaystackFor(toolName, args, commandText);
 
   // 1. Deny band (regex hard-reject)
   const denyHit = matchRule(denyPatterns, haystack);

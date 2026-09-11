@@ -2,9 +2,16 @@
 
 All notable changes to **@log.li/dsh-automode** since the previous release (0.12.0).
 
-## [0.14.3] — unreleased
+## [0.14.4] — unreleased
 
-### Changed
+### Fixed (independent glm-5.3-flash review, decisions recorded in spec)
+- **Deny-scan parity between enforcement points**: the approval path scanned FULL args (document content) while the gate scanned only target paths — a whitelisted write whose body mentioned a sensitive word was wrongly denied, breaking the zero-review allowPath contract and mis-firing the contradiction-pair sentinel. Shared `denyHaystackFor()` (file tools → paths only; bash → command text) now backs both gate and approval.
+- **Escalated file-tool calls now show the classifier its target paths** (`PromptInput.paths`): previously an escalated `write` was judged from justification prose alone (file tools carry no command).
+- `toolArgsKey` dirs are JSON-serialized (comma join could collide `{/a,b}` with a single `/a,b` dir); `warnSetterMissing` tracks per-setter (both may be reported); `reasoning effort` substring match tightened; dead `classifyBand` import removed; spec's stale test claim corrected. A file-tool sig-parity regression test now documents the gate↔approval reason-template coupling.
+
+### Changed (0.14.3 work, not published separately)
+- **Permission setters are now runtime-probed too** (issue #1 by xiaolinziwang): `setApprovalPolicy` / `setSandboxMode` are loaded via namespace import + `typeof` probe instead of named imports. Newer hosts (Desktop 2.0.5 series) removed these exports — a named import crashed plugin load at module-instantiation. Missing setter → auto mode degrades (skip knob + one-time warning) instead of crashing.
+- **Compatibility layer hardened against hosts that removed the legacy `effective*` exports** (0.14.2 work, not published separately):
 - **Permission setters are now runtime-probed too** (issue #1 by xiaolinziwang): `setApprovalPolicy` / `setSandboxMode` are loaded via namespace import + `typeof` probe instead of named imports. Newer hosts (Desktop 2.0.5 series) removed these exports — a named import crashed plugin load at module-instantiation. When a setter is missing, auto mode **degrades** (skips that knob + one-time warning) instead of crashing; the fail-soft path is kept.
 - **Compatibility layer hardened against hosts that removed the legacy `effective*` exports** (0.14.2 work, not published separately): (adopted from [PR #2 by WSL043](https://github.com/log-li/dsh-automode/pull/2)): `permission-state.ts` now loads those helpers via **namespace import + runtime `typeof` probing** instead of named imports. On newer Harness builds / official npm packages where `effectivePermissionPreset` & co are removed entirely, plugin loading no longer fails at module-instantiation; a missing fold simply skips the event-log fallback (projection path unchanged). Our fail-soft `{}` behavior is kept (the PR's `throw` was not adopted).
 

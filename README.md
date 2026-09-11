@@ -232,7 +232,7 @@ Use the audit script to analyze the log, spot the allow→reject contradiction-p
 
 ```bash
 node scripts/audit.mjs                 # report + contradiction-pair sentinel
-node scripts/audit.mjs --fail-on-pairs # exit 1 when contradiction pairs exist (CI/cron alert)
+node scripts/audit.mjs --fail-on-pairs --limit 500 # exit 1 when pairs exist — pair `--limit` for a rolling window in CI/cron
 ```
 
 ## System prompt shadowing

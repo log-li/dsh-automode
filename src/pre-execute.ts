@@ -16,7 +16,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConfigType } from './config.js';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
-import { compileRegex, classifyBand, bashCommandOf, matchRule, compileGlob, matchAllow, isCompositeShell, bashWriteDestinations } from './bands.js';
+import { compileRegex, bashCommandOf, matchRule, compileGlob, matchAllow, isCompositeShell, bashWriteDestinations, isFileTool, collectPaths, collectDenyPaths, denyHaystackFor } from './bands.js';
 import { VerdictCache, hashString } from './cache.js';
 import { Breaker } from './breaker.js';
 import { AllowPathBridge } from './bridge.js';
@@ -86,31 +86,6 @@ export function isInsideTrusted(p: string, roots: string[], base?: string): bool
   const abs = base ? resolve(base, p) : p;
   const rp = realpathSafe(abs);
   return roots.some((root) => rp === root || rp.startsWith(root.endsWith(sep) ? root : root + sep));
-}
-
-/** Collect candidate file/dir path strings from a file-tool call's args. */
-function collectPaths(args: unknown): string[] {
-  if (!args || typeof args !== 'object') return [];
-  const out: string[] = [];
-  for (const key of ['file_path', 'path', 'dir', 'root', 'pattern']) {
-    const v = (args as Record<string, unknown>)[key];
-    if (typeof v === 'string' && v) out.push(v);
-    else if (Array.isArray(v)) for (const item of v) if (typeof item === 'string') out.push(item);
-  }
-  return out;
-}
-
-/** Collect only definitive filesystem-path argument values (no search patterns).
- * Used for deny scanning so a grep/glob search term is not mistaken for a target. */
-function collectDenyPaths(args: unknown): string[] {
-  if (!args || typeof args !== 'object') return [];
-  const out: string[] = [];
-  for (const key of ['file_path', 'path', 'dir', 'root']) {
-    const v = (args as Record<string, unknown>)[key];
-    if (typeof v === 'string' && v) out.push(v);
-    else if (Array.isArray(v)) for (const item of v) if (typeof item === 'string') out.push(item);
-  }
-  return out;
 }
 
 /** Denial envelope — reaches the model verbatim.
@@ -203,10 +178,8 @@ export function registerPreExecute(
         // Check deny first even for read-only (reading .ssh is blocked).
         // For file tools, scan the *target paths* (not content/command text), so
         // a read of a sensitive file path is caught while a file whose *content*
-        // merely mentions a deny word is not.
-        const denyHaystack = isFileTool(toolName)
-          ? `${toolName}\n${collectDenyPaths(exec.arguments).join('\n')}`
-          : `${toolName}\n${commandText}`;
+        // merely mentions a deny word is not (shared haystack, v0.14.4).
+        const denyHaystack = denyHaystackFor(toolName, exec.arguments, commandText);
         const denyHit = matchRule(denyPatterns, denyHaystack);
         if (denyHit !== null) {
           appendDecision({
@@ -231,12 +204,7 @@ export function registerPreExecute(
       // For file tools scan the target paths, not the full args (content /
       // old_string / new_string). Editing a doc that mentions a deny word must
       // not be a false leak; a sensitive *target path* still is.
-      const argsText = typeof exec.arguments === 'string'
-        ? exec.arguments
-        : JSON.stringify(exec.arguments ?? '');
-      const haystack = isFileTool(toolName)
-        ? `${toolName}\n${collectDenyPaths(exec.arguments).join('\n')}`
-        : `${toolName}\n${commandText || argsText}`;
+      const haystack = denyHaystackFor(toolName, exec.arguments, commandText);
       const denyHit = matchRule(denyPatterns, haystack);
       if (denyHit !== null) {
         appendDecision({
@@ -403,7 +371,18 @@ export function registerPreExecute(
         }
 
         const input = promptInputOf(
-          { toolName, reason: escReason, userIntent },
+          // v0.14.4: escalated file-tool calls must show the classifier WHICH
+          // file is targeted (file tools carry no command — without paths the
+          // reviewer saw only the justification prose). bash escalations must
+          // also see the raw command (re-review finding: escReason alone hides
+          // it behind the justification).
+          {
+            toolName,
+            reason: escReason,
+            userIntent,
+            command: commandText || undefined,
+            paths: isFileToolCall ? targetPaths : undefined,
+          },
           softAllowRules,
           softDenyRules,
           environmentFacts,
@@ -499,6 +478,3 @@ export function registerPreExecute(
   }, { prepend: true });
 }
 
-function isFileTool(name: string): boolean {
-  return ['read', 'write', 'edit', 'glob', 'grep', 'find', 'ls'].includes(name);
-}

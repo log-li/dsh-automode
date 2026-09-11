@@ -184,7 +184,7 @@ src/
 
 ## 变更历史
 
-### v0.14.4（2026-09-12，进行中）
+### v0.14.4（2026-09-12，已完成）
 
 - **修复 glm-5.3-flash 独立 review 检出的两项不对称问题**（逐条核验采纳，2026-09-12）。
   - **严重1：approval 路径 deny 扫描面 ≠ gate**。v0.13.0 恢复真实 args 后，`classifyBand`（`bands.ts`）以 `JSON.stringify(args)` 全量入 haystack——文件**内容**（content/new_string）进入 deny 扫描；而 gate 自 v0.11.1 起对文件工具**只扫目标路径**（`collectDenyPaths`，避免「文档提到敏感文件名算泄漏」的误伤）。后果：白名单内写入正文含敏感词 → approval 误拒 → allowPath 零评审契约被打破 + 制造「先 allow 后 reject」矛盾对（哨兵误报源）+ 两道防线 deny 语义分叉。
@@ -198,6 +198,8 @@ src/
   - **轻7**：pre-execute 死导入 `classifyBand` → 随本版清理（消除两套 deny 扫描分叉源头）。
   - **轻10**：`classifyFailureCategory` 的 `reasoning effort` 裸子串过宽 → 收紧为完整短语匹配。
   - **轻11**：README audit 段补 `--limit` 用法示例。
+  - 落地：80 项 smoke 全过（新增 6：denyHaystackFor 一致性 ×1、paths 渲染 ×1、dirs 碰撞 ×1、file-tool sig 奇偶性 ×1、effort 子串收紧 ×2）；README(en/zh) `--limit` 示例；测试声明补正；版本收敛 0.14.4（0.14.2/0.14.3 未单独发布）。
+  - **re-review（glm-5.3-flash，push 前门禁）落地**：① 采纳【严重】遗留——gate 提权分支 `promptInputOf` 补 `command`（v0.13.0 只修了 approval 侧，gate 侧 bash 提权分类器仍只见 justification）；② 采纳【中】——`toolArgsKey` dirs 改 `hashString(JSON…)`（防 `maxArgsChars` 截断把超长 reason 后的 dirs 截出 key、复活跨目录共享）；③ **拒绝【中】**核验无净变化——非文件分支 `commandText||argsText` fallback 与旧版 deny band 行为等价（旧版已扫 args），只读点前移不改最终 deny 结果，不做无依据改动。最终 80 项 smoke 全过，push。
   - **轻8 拒绝**（记录理由）：deny regex 每次 approval 重编译优化收益微乎其微，改预编译需扩 decideAuto 参数——性价比低，不做。
   - **轻12 登记**（范围外，本期不修）：gate 不执行 deletionGuard、bridge 裸 callId 非会话隔离、`ls*` glob 宽匹配、allowPath 内 `git push --force` 跳过分类器——记入已知问题待后续评估。
 
@@ -206,7 +208,7 @@ src/
 - **修复：权限包写操作 setter 仍直连命名导入 → 新宿主移除导出时加载期崩溃**（[issue #1](https://github.com/log-li/dsh-automode/issues/1)，xiaolinziwang，Desktop 2.0.5）。
   - **背景**：v0.14.2 把 `permission-state.ts` 的 legacy **读**函数（`effective*`）改为 namespace-probe；但 `src/index.ts` 仍**直接命名导入**两个**写操作**：`setApprovalPolicy`（`@deepseek-ai/dsh-user-approval`）与 `setSandboxMode`（`@deepseek-ai/dsh-sandbox-policy`）。新宿主（Desktop 2.0.5 系）移除这些导出时，index.ts 在**模块实例化期** `SyntaxError`——插件整棵加载失败（issue #1 的报错即此形态）。
   - **修复**：两个 setter 改为 **namespace import + 运行时探测**（复用 v0.14.2 的 probe 思路）；缺失时 `writeAutoModeKnobs`/`writeAutoMode` **降级**（跳过对应设置 + `logger.warn` 提示宿主 API 变化），**不崩**（与 fail-soft 一致）。
-  - 测试：`writeAutoMode` 在「setter 缺失」形态下不抛错、仅不写对应 knob；既有 75 项全绿。
+  - 测试（v0.14.4 补正）：`probeSetter` 单测覆盖探测逻辑；「writeAutoMode 缺 setter 形态」由代码审查确认（setter 为模块级 const、未做 DI，该形态无常驻测试——v0.14.4 已记录此限制）。
   - 落地：`probeSetter` 导出单测（76 项 smoke 全过）；CHANGELOG(en/zh) 合并 0.14.2 未发布条目并补 0.14.3；版本 0.14.1 → 0.14.3（0.14.2 未单独发布）。
 
 ### v0.14.2（2026-09-12，已完成）

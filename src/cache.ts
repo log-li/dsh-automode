@@ -69,7 +69,10 @@ export function toolArgsKey(args: unknown, reason: string): string {
       }
     }
     if (dirs.size > 0) {
-      return `${String(reason ?? '')} |dirs:${[...dirs].sort().join(',')}`;
+      // Hashed (short, fixed-length) so a long model-controlled `reason`
+      // cannot truncate the dirs out of the key under maxArgsChars and
+      // resurrect same-reason/different-dir sharing (v0.14.4 re-review #1).
+      return `${String(reason ?? '')} |dirs:${hashString(JSON.stringify([...dirs].sort()))}`;
     }
   }
   return String(reason ?? '');
