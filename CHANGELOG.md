@@ -4,7 +4,7 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 
 ## [0.14.4] — 2026-09-12
 
-### Fixed (independent review by a different model family; decisions recorded in spec)
+### Fixed
 - **Deny-scan parity between enforcement points**: the approval path scanned FULL args (document content) while the gate scanned only target paths — a whitelisted write whose body mentioned a sensitive word was wrongly denied, breaking the zero-review allowPath contract and mis-firing the contradiction-pair sentinel. Shared `denyHaystackFor()` (file tools → paths only; bash → command text) now backs both gate and approval.
 - **Escalated file-tool calls now show the classifier its target paths** (`PromptInput.paths`): previously an escalated `write` was judged from justification prose alone (file tools carry no command).
 - `toolArgsKey` dirs are JSON-serialized (comma join could collide `{/a,b}` with a single `/a,b` dir); `warnSetterMissing` tracks per-setter (both may be reported); `reasoning effort` substring match tightened; dead `classifyBand` import removed; spec's stale test claim corrected. A file-tool sig-parity regression test now documents the gate↔approval reason-template coupling.
@@ -55,7 +55,7 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 
 ## [0.14.4] — 2026-09-12
 
-### 修复（独立模型家族 review 检出，决策见 spec）
+### 修复
 - **两道防线 deny 扫描一致**：approval 路径曾扫全量 args（含文件内容），gate 只扫目标路径——白名单写入正文含敏感词会被误拒，破坏零评审契约并让矛盾对哨兵误报。共享 `denyHaystackFor()`（文件工具→仅路径、bash→命令文本）现同时支撑 gate 与 approval。
 - **提权文件工具调用把目标路径传给分类器**（`PromptInput.paths`）：此前提权 `write` 仅凭理由文本被评判（文件工具无 command）。
 - `toolArgsKey` 目录改 JSON 序列化（逗号拼接可碰撞）；`warnSetterMissing` 按 setter 名跟踪；`reasoning effort` 子串匹配收紧；清理死导入 `classifyBand`；补正 spec 虚记的测试声明；新增文件工具签名奇偶性回归测试（记录 gate↔approval reason 模板耦合）。
