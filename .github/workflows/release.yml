@@ -50,8 +50,13 @@ jobs:
           import re, sys
           ver = sys.argv[1].lstrip('v')
           s = open('CHANGELOG.md').read()
-          m = re.search(rf'## \[{re.escape(ver)}\].*?(?=\n## \[|\Z)', s, re.S)
-          print(m.group(0).strip() if m else f'Release {sys.argv[1]} (see CHANGELOG.md)')
+          en, _, zh = s.partition('\n# 更新日志')  # English block, then 中文区块
+          pat = rf'## \[{re.escape(ver)}\].*?(?=\n## \[|\Z)'
+          grab = lambda b: re.search(pat, b, re.S).group(0).strip() if re.search(pat, b, re.S) else ''
+          out = grab(en)
+          zhh = grab(zh) if zh else ''
+          notes = out + (('\n\n---\n\n' + zhh) if zhh else '')
+          print(notes or f'Release {sys.argv[1]} (see CHANGELOG.md)')
           PY
           if gh release view "$VER" >/dev/null 2>&1; then
             gh release edit "$VER" --title "Release $VER" --notes-file /tmp/release-notes.md
