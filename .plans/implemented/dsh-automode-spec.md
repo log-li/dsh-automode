@@ -2,7 +2,7 @@ Status: implemented
 
 # dsh-automode：自主审批插件（借鉴 Nuo-cl/dsh-auto-mode 的设计模式，独立实现）
 
-> 本文档是 dsh-automode 的**当前设计与实现规格**。结构：前半为「当前状态」（架构 / 决策链 / 关键行为 / 版本支持 / 已知问题），后半为「变更历史」（changelog，按版本倒序）。历史补记的详细根因分析已压缩进 changelog；**安全边界与关键决策保留**。
+> **本文档为活文档**：创建于 2026-08-22，随版本持续更新（文件名不带日期，日期在内部维护——各版本日期见「变更历史」，最近更新见最新版本条目）。结构：前半为「当前状态」（架构 / 决策链 / 关键行为 / 版本支持 / 已知问题），后半为「变更历史」（changelog，按版本倒序）。历史补记的详细根因分析已压缩进 changelog；**安全边界与关键决策保留**。
 >
 > 2026-08-25 修订：本文档原题「Fork Nuo-cl/dsh-auto-mode 并重构为 dsh-automode」。本插件**并非 fork**——以自身设计为主，借鉴了 Nuo-cl/dsh-auto-mode 与 pi-automode 的思路与模式独立实现；对二者的贡献见下方「致谢与参考」。
 
@@ -16,8 +16,9 @@ Status: implemented
 
 - **Nuo-cl/dsh-auto-mode**：auto mode 概念、预执行门（pre-execute gate）、裁决缓存、熔断器、deny/allow 频带、CC 式拒绝引导等设计模式。
 - **pi-automode**：两阶段分类器、`allowInsideWorkingDirectory`、`$defaults` 规则机制等设计模式。
+- **WSL043**（[PR #2](https://github.com/log-li/dsh-automode/pull/2)，2026-09-10）：权限兼容层的 **namespace-import + 运行时 `typeof` 探测**思路——在新 Harness build 整体移除 legacy `effective*` 导出的宿主上，避免模块加载期崩溃；v0.14.2 采纳该思路加固 `permission-state.ts`。
 
-对外说明建议措辞：`Inspired by Nuo-cl/dsh-auto-mode and pi-automode`。
+对外说明建议措辞：`Inspired by Nuo-cl/dsh-auto-mode and pi-automode; compat probing adopted from a contribution by WSL043 (PR #2)`。
 
 ## 共识（grill 产出）
 

@@ -335,6 +335,17 @@ test('isAuto falls back to the event log on pre-0.1.5 cores', () => {
   assert.equal(isAuto(ctx, session), true);
 });
 
+console.log('permission-state.ts (v0.14.2 namespace probing, adopted from PR #2)');
+import { legacyFold } from '../lib/permission-state.js';
+test('legacyFold probes helpers at runtime — removed exports do not crash or misread', () => {
+  const fold = () => 'auto-mode';
+  assert.equal(legacyFold({ effectivePermissionPreset: fold }, 'effectivePermissionPreset')([]), 'auto-mode');
+  assert.equal(legacyFold({}, 'effectivePermissionPreset'), undefined); // export removed → skip fallback
+  assert.equal(legacyFold({ effectivePermissionPreset: 42 }, 'effectivePermissionPreset'), undefined); // not a function
+  assert.equal(legacyFold(null, 'effectivePermissionPreset'), undefined);
+  assert.equal(legacyFold('string', 'effectivePermissionPreset'), undefined);
+});
+
 test('writeAutoMode uses the public permissionPresets.set path', () => {
   const { events, agent, injected, ctx } = makeAutoHarness();
   writeAutoMode(ctx, agent);

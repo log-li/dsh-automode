@@ -2,6 +2,11 @@
 
 All notable changes to **@log.li/dsh-automode** since the previous release (0.12.0).
 
+## [0.14.2] — unreleased
+
+### Changed
+- **Compatibility layer hardened against hosts that removed the legacy `effective*` exports** (adopted from [PR #2 by WSL043](https://github.com/log-li/dsh-automode/pull/2)): `permission-state.ts` now loads those helpers via **namespace import + runtime `typeof` probing** instead of named imports. On newer Harness builds / official npm packages where `effectivePermissionPreset` & co are removed entirely, plugin loading no longer fails at module-instantiation; a missing fold simply skips the event-log fallback (projection path unchanged). Our fail-soft `{}` behavior is kept (the PR's `throw` was not adopted).
+
 ## [0.14.1] — 2026-09-12
 
 ### Fixed

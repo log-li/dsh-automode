@@ -19,13 +19,24 @@
  * projection — the same fold the core `dsh-permission-presets` service reads
  * through `current()`. Cores that still expose the event log keep working via
  * the log helpers, so the plugin spans its whole declared peer range.
+ *
+ * v0.14.2 (adopts PR #2, WSL043): the legacy event-fold helpers
+ * (`effectivePermissionPreset` / `effectiveApprovalPolicy` /
+ * `effectiveSandboxMode`) were once NAMED imports here. Newer Harness builds /
+ * official npm packages REMOVE those exports entirely — on such hosts a named
+ * import fails at module instantiation even though the runtime path never uses
+ * the helper (the projection is preferred). Switched to namespace imports +
+ * runtime `typeof` probing, so loading never depends on an export that may be
+ * gone; a missing fold simply skips the event-log fallback.
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { Session } from '@deepseek-ai/dsh-session';
 import type { ApprovalPolicy } from '@deepseek-ai/dsh-user-approval';
-import { effectiveApprovalPolicy } from '@deepseek-ai/dsh-user-approval';
-import { effectiveSandboxMode } from '@deepseek-ai/dsh-sandbox-policy';
-import { effectivePermissionPreset } from '@deepseek-ai/dsh-permission-presets';
+// namespace imports + runtime probe (v0.14.2): never a load-time dependency on
+// exports that newer hosts may have removed.
+import * as presets from '@deepseek-ai/dsh-permission-presets';
+import * as approvalModule from '@deepseek-ai/dsh-user-approval';
+import * as sandboxModule from '@deepseek-ai/dsh-sandbox-policy';
 
 /** One session's durable permission facts. A missing key was never recorded. */
 export interface PermissionSnapshot {
@@ -40,8 +51,23 @@ export interface PermissionSnapshot {
 /** Projection key owned by `@deepseek-ai/dsh-permission-presets`. */
 const PERMISSIONS_KEY = 'permissions';
 
-/** Event-log shape the pre-0.1.5 helpers accept. */
-type PermissionEvents = Parameters<typeof effectivePermissionPreset>[0];
+/**
+ * Shape of the legacy event-log fold helpers (`effectivePermissionPreset` and
+ * friends on pre-0.1.6 cores): fold the session event log into a value.
+ */
+export type LegacyFold = (events: unknown) => string | undefined;
+
+/**
+ * Runtime-probe a legacy fold helper on a namespace module (v0.14.2, PR #2
+ * approach). A named import would crash at load time on hosts that removed the
+ * export; probing keeps loading safe and returns undefined when the helper is
+ * gone — callers then skip the event-log fallback.
+ */
+export function legacyFold(module: unknown, name: string): LegacyFold | undefined {
+  if (module === null || typeof module !== 'object') return undefined;
+  const value = (module as Record<string, unknown>)[name];
+  return typeof value === 'function' ? (value as LegacyFold) : undefined;
+}
 
 /** The 0.1.5+ projection read we depend on (`stateOf` is newer than our peer floor). */
 interface ProjectionReader {
@@ -52,7 +78,8 @@ interface ProjectionReader {
  * Read one session's durable permission facts.
  *
  * Prefers the `permissions` session projection (dsh >= 0.1.5-rc.1) and falls
- * back to the event log for older cores.
+ * back to the event log for older cores (only when the legacy fold helpers are
+ * still exported — v0.14.2 runtime-probes them and skips the fallback if gone).
  *
  * @param ctx - plugin context carrying the `sessionProjections` registry.
  * @param session - session whose permission facts are read.
@@ -67,12 +94,15 @@ export function permissionSnapshot(ctx: Context, session: Session): PermissionSn
     if (state !== null && state !== undefined) return state;
   }
 
-  const events = (session as unknown as { events?: PermissionEvents }).events;
+  const events = (session as unknown as { events?: unknown }).events;
   if (events !== null && events !== undefined) {
+    const presetFold = legacyFold(presets, 'effectivePermissionPreset');
+    const sandboxFold = legacyFold(sandboxModule, 'effectiveSandboxMode');
+    const approvalFold = legacyFold(approvalModule, 'effectiveApprovalPolicy');
     return {
-      preset: effectivePermissionPreset(events),
-      sandbox: effectiveSandboxMode(events),
-      approval: effectiveApprovalPolicy(events),
+      preset: presetFold ? presetFold(events) : null,
+      sandbox: sandboxFold ? sandboxFold(events) : null,
+      approval: approvalFold ? (approvalFold(events) as ApprovalPolicy | undefined) : null,
     };
   }
 
