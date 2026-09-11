@@ -16,13 +16,12 @@ import '@deepseek-ai/dsh-commands';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { Session } from '@deepseek-ai/dsh-session';
-import {
-  setApprovalPolicy,
-  type ApprovalOutcome,
-  type ApprovalPolicy,
-  type ApprovalRequest,
-} from '@deepseek-ai/dsh-user-approval';
-import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy';
+import type { ApprovalOutcome, ApprovalPolicy, ApprovalRequest } from '@deepseek-ai/dsh-user-approval';
+// v0.14.3 (issue #1): the permission SETTERS are probed at runtime, never
+// named-imported — newer hosts (Desktop 2.0.5 series) removed these exports and
+// a named import would crash plugin load at module-instantiation.
+import * as userApprovalModule from '@deepseek-ai/dsh-user-approval';
+import * as sandboxPolicyModule from '@deepseek-ai/dsh-sandbox-policy';
 
 import { Config, type ConfigType, expandDefaults } from './config.js';
 import { permissionSnapshot } from './permission-state.js';
@@ -102,16 +101,42 @@ function policyOf(ctx: Context, session: Session): ApprovalPolicy | 'auto' | und
   return isAuto(ctx, session) ? 'auto' : permissionSnapshot(ctx, session).approval ?? undefined;
 }
 
+/** v0.14.3: probe a (possibly removed) void setter off a namespace module. */
+export function probeSetter(module: unknown, name: string): ((...args: unknown[]) => void) | undefined {
+  if (module === null || typeof module !== 'object') return undefined;
+  const value = (module as Record<string, unknown>)[name];
+  return typeof value === 'function' ? (value as (...args: unknown[]) => void) : undefined;
+}
+
+/** Setters resolved at load time; undefined when the host removed the export. */
+const setApprovalPolicy = probeSetter(userApprovalModule, 'setApprovalPolicy');
+const setSandboxMode = probeSetter(sandboxPolicyModule, 'setSandboxMode');
+let setterMissingWarned = false;
+
 function writeAutoModeKnobs(ctx: Context, session: Session): void {
   const state = permissionSnapshot(ctx, session);
   if (state.preset !== AUTO_MODE_PRESET) {
     session.append('permission/preset', { preset: AUTO_MODE_PRESET });
   }
   if (state.sandbox !== AUTO_SANDBOX) {
-    setSandboxMode(session, AUTO_SANDBOX);
+    if (setSandboxMode) setSandboxMode(session, AUTO_SANDBOX);
+    else warnSetterMissing(ctx, 'setSandboxMode');
   }
   const current = state.approval ?? ctx.approval.config.policy ?? 'ask';
-  if (current !== 'ask') setApprovalPolicy(session, 'ask');
+  if (current !== 'ask') {
+    if (setApprovalPolicy) setApprovalPolicy(session, 'ask');
+    else warnSetterMissing(ctx, 'setApprovalPolicy');
+  }
+}
+
+/** Degrade, never crash, when the host removed a permission setter (issue #1). */
+function warnSetterMissing(ctx: Context, name: string): void {
+  if (setterMissingWarned) return;
+  setterMissingWarned = true;
+  ctx.logger('auto-mode').warn(
+    `dsh-automode: host removed the "${name}" export — that auto-mode knob will not be set (degraded mode). ` +
+    'Consider a host that still exports the permission setters.',
+  );
 }
 
 export function writeAutoMode(ctx: Context, agent: Agent): void {

@@ -381,6 +381,17 @@ test('writeAutoMode is a no-op when auto mode is already selected', () => {
   assert.equal(injected.length, 0);
 });
 
+console.log('index.ts probeSetter (v0.14.3, issue #1 — setters may be removed by host)');
+import { probeSetter } from '../lib/index.js';
+test('probeSetter resolves live setters and yields undefined for removed/non-function ones', () => {
+  const fn = (_s, _m) => undefined;
+  assert.equal(probeSetter({ setSandboxMode: fn }, 'setSandboxMode')(1, 2), undefined);
+  assert.equal(probeSetter({}, 'setSandboxMode'), undefined); // export removed → degrade, no crash
+  assert.equal(probeSetter({ setSandboxMode: 42 }, 'setSandboxMode'), undefined); // not a function
+  assert.equal(probeSetter(null, 'setSandboxMode'), undefined);
+  assert.equal(probeSetter('str', 'setSandboxMode'), undefined);
+});
+
 console.log('\nbreaker.js');
 test('breaker trips after N consecutive denies', () => {
   const b = new Breaker();

@@ -20,5 +20,7 @@ export declare const name = "dsh-automode";
 export { Config };
 export declare const inject: string[];
 export declare function isAuto(ctx: Context, session: Session): boolean;
+/** v0.14.3: probe a (possibly removed) void setter off a namespace module. */
+export declare function probeSetter(module: unknown, name: string): ((...args: unknown[]) => void) | undefined;
 export declare function writeAutoMode(ctx: Context, agent: Agent): void;
 export declare function apply(ctx: Context, rawConfig: unknown): void;
