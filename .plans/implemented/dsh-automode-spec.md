@@ -184,12 +184,13 @@ src/
 
 ## 变更历史
 
-### v0.14.2（2026-09-12，进行中）
+### v0.14.2（2026-09-12，已完成）
 
 - **兼容层加固：吸收 PR #2 的 namespace-import + 运行时探测**（外部贡献 WSL043，2026-09-10）。
   - **背景**：PR #2（`fix: support current Harness permission services without breaking legacy hosts`）实测报告：更新的 Harness build / 官方 npm 包**整体删除了 `effectivePermissionPreset` 等 legacy 导出**——而 v0.11.2 的 `permission-state.ts` 仍**直接命名导入**三个 `effective*` 函数。在「导出被移除」的宿主上，我们的模块在**加载/实例化期**即崩（命名导入指向不存在的导出），即使运行时走投影路径根本用不到它们。用户宿主（0.1.5-rc.1）实测导出仍在，故 v0.11.2+ 在用户环境正常——风险只在导出被删的宿主。
   - **采纳**：`permission-state.ts` 改为 **namespace import + `typeof` 运行时探测**（`(mod as unknown as Record<string, unknown>)[name]`，缺失返回 undefined）→ 模块加载期不再依赖 `effective*` 导出存在；回退路径探测不到就跳过（保持我们的 **fail-soft 返回 `{}`**，不学 PR 的 throw）。保留我们的架构优势：`sessionProjections.stateOf` 投影优先 + `session.events` 回退 + 无源返回 `{}`。
   - **测试**：导出 `legacyFold` 供单测（空模块 / 带函数模块 / 非函数值三种形态）；既有 74 项行为不变（投影 / 旧内核回退路径全绿）。
+  - 落地：`legacyFold` 导出单测（75 项 smoke 全过）；CHANGELOG(en/zh) 与 `package.json` contributors 署名 WSL043；实现 commit 带 `Co-authored-by: WSL043 <100819018+WSL043@users.noreply.github.com>`（GitHub commit 页已渲染）；spec 文件去日期命名（`dsh-automode-spec.md`，活文档日期在内部维护）。
 
 ### v0.14.1（2026-09-12，已完成）
 

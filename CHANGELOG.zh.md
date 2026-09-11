@@ -2,6 +2,12 @@
 
 **@log.li/dsh-automode** 自上次发布（0.12.0）以来的全部变更。
 
+## [0.14.2] — 未发布（unreleased）
+
+### 变更（Changed）
+- **兼容层加固**：`permission-state.ts` 对 legacy `effective*` 导出改用 **namespace import + 运行时 `typeof` 探测**（思路采纳自 [WSL043 的 PR #2](https://github.com/log-li/dsh-automode/pull/2)）。在新版 Harness build / 官方 npm 包**整体移除** `effectivePermissionPreset` 等导出的宿主上，插件加载不再在模块实例化期崩溃；探测不到的 fold 直接跳过事件日志回退（投影路径不变）。保留我们的 fail-soft `{}` 行为（未采纳 PR 的 `throw`）。
+- 贡献署名：`package.json` `contributors` 增加 WSL043；实现 commit 带 `Co-authored-by`。
+
 ## [0.14.1] — 2026-09-12
 
 ### 修复（Fixed）
