@@ -1,12 +1,3 @@
-/**
- * Verdict cache — shared between the pre-execute gate and the approval path.
- *
- * Keyed per session by a stable signature (tool + reason + args head).
- * TTL-bounded and size-capped; only positive/negative CLASSIFIER verdicts
- * live here (deterministic bands re-run cheaply and must never be cached).
- *
- * Ported from dsh-auto-mode v0.4.1 lib/index.js.
- */
 export interface CachedVerdict {
     decision: 'ALLOW' | 'DENY';
     at: number;
@@ -18,6 +9,18 @@ export interface CachedVerdict {
  * classifier to re-run (a cached DENY must not swallow a user grant).
  */
 export declare function hashString(text: string): string;
+/**
+ * The cache-key subject for one tool call's arguments.
+ *
+ * - `args.command` (bash) → the command text, verbatim (legacy behavior).
+ * - argument objects with path fields (file tools) → `reason |dirs:<sorted,
+ *   deduped target dirnames>` (v0.14.1). Same directory shares a verdict;
+ *   different directories never collide, even with identical justification
+ *   text. `dirname` is applied without realpath — a symlink / `..` variant of
+ *   the same directory simply re-classifies once (safe side).
+ * - anything else → the reason text (legacy fallback).
+ */
+export declare function toolArgsKey(args: unknown, reason: string): string;
 export declare class VerdictCache {
     private store;
     /**
@@ -28,6 +31,11 @@ export declare class VerdictCache {
      * a new human authorization invalidates a previously cached verdict and the
      * classifier is re-run with the fresh intent. Without it the signature is
      * exactly the legacy tool|command form.
+     *
+     * Key subject = `args.command` when present (bash); for argument objects
+     * WITHOUT a `command` (file tools) it is `reason` plus the sorted, deduped
+     * TARGET DIRECTORIES of `file_path/path/dir/root` (v0.14.1). No path fields
+     * → legacy `tool|reason` form, unchanged behavior.
      */
     static sig(toolName: string, reason: string, args: unknown, maxChars?: number, intentHash?: string): string;
     get(sessionId: string, sig: string): 'ALLOW' | 'DENY' | null;

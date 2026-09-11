@@ -5,8 +5,20 @@
  * TTL-bounded and size-capped; only positive/negative CLASSIFIER verdicts
  * live here (deterministic bands re-run cheaply and must never be cached).
  *
+ * v0.14.1 (directory granularity): file tools (write/edit/…) carry no
+ * `command`, so their key used to collapse to `tool | justification | intent`
+ * — write probes A→B (same justification, different file) and D→E (different
+ * directory) both hit the cache, letting a verdict for one target apply to
+ * another the classifier never saw. The key now folds the TARGET
+ * DIRECTORIES (`dirname` of `file_path/path/dir/root`, sorted, deduped) of
+ * file-tool args in as well: same directory shares (batch writes in one dir
+ * are the same safety profile — that is the user-approved granularity),
+ * different directories never share. Sensitive FILENAMES stay the deny band's
+ * job (`collectDenyPaths` re-checks every call, cache-independent).
+ *
  * Ported from dsh-auto-mode v0.4.1 lib/index.js.
  */
+import { dirname } from 'node:path';
 
 export interface CachedVerdict {
   decision: 'ALLOW' | 'DENY';
@@ -30,6 +42,39 @@ export function hashString(text: string): string {
   return h.toString(36);
 }
 
+/** Path fields the sig recognizer treats as file-tool targets. */
+const TARGET_PATH_KEYS = ['file_path', 'path', 'dir', 'root'] as const;
+
+/**
+ * The cache-key subject for one tool call's arguments.
+ *
+ * - `args.command` (bash) → the command text, verbatim (legacy behavior).
+ * - argument objects with path fields (file tools) → `reason |dirs:<sorted,
+ *   deduped target dirnames>` (v0.14.1). Same directory shares a verdict;
+ *   different directories never collide, even with identical justification
+ *   text. `dirname` is applied without realpath — a symlink / `..` variant of
+ *   the same directory simply re-classifies once (safe side).
+ * - anything else → the reason text (legacy fallback).
+ */
+export function toolArgsKey(args: unknown, reason: string): string {
+  if (typeof args === 'object' && args !== null) {
+    const rec = args as Record<string, unknown>;
+    if (typeof rec.command === 'string' && rec.command) return rec.command;
+    const dirs = new Set<string>();
+    for (const key of TARGET_PATH_KEYS) {
+      const v = rec[key];
+      if (typeof v === 'string' && v) dirs.add(dirname(v));
+      else if (Array.isArray(v)) {
+        for (const item of v) if (typeof item === 'string' && item) dirs.add(dirname(item));
+      }
+    }
+    if (dirs.size > 0) {
+      return `${String(reason ?? '')} |dirs:${[...dirs].sort().join(',')}`;
+    }
+  }
+  return String(reason ?? '');
+}
+
 export class VerdictCache {
   private store = new Map<string, Map<string, CachedVerdict>>();
 
@@ -41,13 +86,14 @@ export class VerdictCache {
    * a new human authorization invalidates a previously cached verdict and the
    * classifier is re-run with the fresh intent. Without it the signature is
    * exactly the legacy tool|command form.
+   *
+   * Key subject = `args.command` when present (bash); for argument objects
+   * WITHOUT a `command` (file tools) it is `reason` plus the sorted, deduped
+   * TARGET DIRECTORIES of `file_path/path/dir/root` (v0.14.1). No path fields
+   * → legacy `tool|reason` form, unchanged behavior.
    */
   static sig(toolName: string, reason: string, args: unknown, maxChars = 200, intentHash = ''): string {
-    const cmd =
-      (typeof args === 'object' && args !== null && typeof (args as Record<string, unknown>).command === 'string'
-        ? ((args as Record<string, unknown>).command as string)
-        : '') ||
-      String(reason ?? '');
+    const cmd = toolArgsKey(args, reason);
     const base = `${toolName}|${cmd.slice(0, maxChars).toLowerCase()}`;
     return intentHash ? `${base}|intent:${intentHash}` : base;
   }

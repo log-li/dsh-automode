@@ -450,6 +450,37 @@ test('v0.13.0: approval-path sig (recovered args) matches pre-execute sig — re
   assert.equal(c.get(sid, approvalSig), 'ALLOW');
 });
 
+console.log('cache sig (v0.14.1 directory granularity for file tools)');
+test('same target directory shares the key (filenames ignored)', () => {
+  const a = VerdictCache.sig('write', 'export docs', { file_path: '/x/OneDrive/a.md', content: 'A' });
+  const b = VerdictCache.sig('write', 'export docs', { file_path: '/x/OneDrive/b.md', content: 'B' });
+  assert.equal(a, b);
+});
+test('different target directories NEVER share, even with identical justification (D→E regression)', () => {
+  // 2026-09-12 probe: D (~/Documents) classified → E (~/Downloads, same
+  // justification text, 9s later) hit the cache. After v0.14.1 the keys must
+  // differ → E re-classifies.
+  const d = VerdictCache.sig('write', '缓存区分度测试甲', { file_path: '/Users/logan/Documents/_cache_d.txt' });
+  const e = VerdictCache.sig('write', '缓存区分度测试甲', { file_path: '/Users/logan/Downloads/_cache_e.txt' });
+  assert.notEqual(d, e);
+  // …and the cache store itself respects it:
+  const c = new VerdictCache();
+  const sid = 's-dirs';
+  c.put(sid, d, 'ALLOW');
+  assert.equal(c.get(sid, e), null);
+});
+test('multi-target arrays sort and dedupe dirs (order-independent)', () => {
+  const s1 = VerdictCache.sig('write', 'r', { file_path: ['/a/x', '/b/y', '/a/x'] });
+  const s2 = VerdictCache.sig('write', 'r', { file_path: ['/a/x', '/a/x', '/b/y'] });
+  assert.equal(s1, s2);
+});
+test('bash command subject wins; path fields ignored for bash; path-less args fall back to reason', () => {
+  const s1 = VerdictCache.sig('bash', 'r', { command: 'mv a /dest' });
+  assert.equal(VerdictCache.sig('bash', 'r', { command: 'mv a /dest', file_path: '/zz' }), s1);
+  assert.equal(VerdictCache.sig('bash', 'no path args', { foo: 1 }), VerdictCache.sig('bash', 'no path args', undefined));
+  assert.equal(VerdictCache.sig('bash', 'x', undefined), VerdictCache.sig('bash', 'x', null));
+});
+
 console.log('bands.js (bashWriteDestinations)');
 test('cp/mv destination is the last positional', () => {
   assert.deepEqual(

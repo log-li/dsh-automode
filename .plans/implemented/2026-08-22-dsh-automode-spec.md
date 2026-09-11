@@ -183,14 +183,15 @@ src/
 
 ## 变更历史
 
-### v0.14.1（2026-09-12，进行中）
+### v0.14.1（2026-09-12，已完成）
 
 - **修复：文件工具缓存签名不含目标路径 → 同 justification 跨目录共享裁决**（2026-09-12 实测复现，用户指出）。
   - **症状**：write 探针 D 到 `~/Documents`（justification「缓存区分度测试甲」）分类器新审后，9 秒后同 justification 写 E 到 `~/Downloads`（**不同目录**）→ `verdict cache ALLOW` **命中 D 的裁决**。日志：`08:30:23 分类器新审` → `08:30:32 verdict cache ALLOW`。
   - **根因**：`VerdictCache.sig`（`cache.ts:36-51`）的命令主体 = `args.command || reason`；文件工具（write/edit）**没有 `command` 字段** → key 退化为 `toolName | justification文本 | 意图hash`——**路径（目录与文件名）完全不参与**。目录粒度都谈不上：同理由可跨目录任意共享（除 deny 频带先拦的部分）。
   - **决策（用户拍板，2026-09-12）**：**按目标目录粒度入 key**（不是完整路径，也不是文件名）——同一目录下写多个文件（批量导出等）安全属性相同，共享一次裁决合理；**文件名敏感由 deny 频带兜底**（`collectDenyPaths` 对每个 `file_path` 每调用照跑，与缓存无关：`.env`、`.ssh/`、`credentials` 等仍硬拒）。
-  - **实现**：`VerdictCache.sig` 对无 `command` 的对象 args，提取 `file_path/path/dir/root` 字段（含数组），取各自 `dirname`，**排序去重**后拼入 key（`reason |dirs:…`）。有 `command`（bash）路径行为不变。两侧一致：pre-execute 与 approval 共用同一份 `args`（v0.13.0 恢复机制），sig 内统一提取。
+  - **实现**：新增 `toolArgsKey`（`cache.ts`）供 `VerdictCache.sig` 使用：有 `command`（bash）→ 命令原文（行为不变）；无 `command` 的对象 args → 提取 `file_path/path/dir/root`（含数组）各自 `dirname`，**排序去重**后拼入 key（`reason |dirs:…`）；无路径字段 → 回退 reason（兼容）。两侧一致：pre-execute 与 approval 共用同一份 `args`（v0.13.0 恢复机制），sig 内统一提取。
   - **边界**：目录用 `dirname` 字符串（不做 realpath——symlink/`..` 变体会多审一次，属安全侧）；deny 盲区内的敏感文件名由用户规则负责（职责划拨：LLM 不按文件名枚举安全规则）。
+  - 测试：74 项 smoke 全过（新增 4：同目录共享 / 跨目录 D→E 回归（含存储层断言）/ 多目标排序去重 / bash 命令优先+路径字段忽略+无路径回退）；README(en/zh) verdict cache 段同步；版本 0.14.0 → 0.14.1。
 
 ### v0.14.0（2026-09-11，已完成）
 
