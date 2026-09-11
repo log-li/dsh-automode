@@ -43,6 +43,10 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 - **Bash write-command target extraction now handles `~` and the `trash` wrapper.** `bashDests` was always `[]` for e.g. `~/bin/trash ~/.agents/skills/see-image` → `allowPaths` (incl. `~/.agents`) and the approval bridge never engaged for those calls. Fix: every extracted token gets `~`/`$HOME` expansion, and `trash` (a **recoverable** delete — freedesktop recycle bin) moved from the benign-utility table into the write-command table, returning its positional targets (all must resolve inside `allowPaths`, else the whole call falls back to the classifier). Irrecoverable deletes (`rm`, `shred`, `unlink`) remain unallowlisted. The spec's proposed "extract any absolute path from unknown commands" relaxation was explicitly **rejected** (a wrapper script could `curl | sh` inside — trust-boundary bypass).
 - README(en/zh) safety-boundary and verdict-cache sections synced.
 
+### Thanks
+- **WSL043** — [PR #2](https://github.com/log-li/dsh-automode/pull/2): the namespace-import + runtime-probe technique for the permission-compat layer (co-author on the v0.14.2 commit, listed in package metadata).
+- **xiaolinziwang** — [issue #1](https://github.com/log-li/dsh-automode/issues/1): report of the Desktop 2.0.5 permission-setter removal that led to the graceful-degradation fix.
+
 ## Previous release
 
 **0.12.0 (2026-09-10):** explicit dsh peer-range declaration (`>=0.1.0-rc.6 <0.2.0`), compatibility version matrix in README. (See the spec's changelog for 0.11.x and earlier.)
@@ -94,6 +98,10 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 - **approval 路径缓存签名与 pre-execute 门一致（消除二次分类）**。复现：同一动作先被门放行（`pre-execute-allow`），约 2 秒后被 approval 路径拒绝（`decision outcome:rejected`）——「先放行、后否决」矛盾对。根因：`VerdictCache.sig` 在门侧用**命令原文**签名、在 approval 侧用**escalation reason 文本**签名（`approval/request` payload 刻意不携带参数）→ key 恒不等 → 缓存 100% miss → 信息更少的第二次分类覆盖信息更全的第一次。修复：`restoreToolCallArgs()` 按 **`callId`** 从会话恢复精确的 tool-call 参数 → 两侧同签名 → 提权调用命中门的裁决；恢复的命令原文同时传入 approval 分类器（`PromptInput.command`）与 deny 频带检查。
 - **bash 写命令目标提取支持 `~` 展开与 `trash` 包装脚本**。`bashDests` 对 `~/bin/trash ~/.agents/skills/see-image` 之类恒为 `[]` → `allowPaths`（含 `~/.agents`）与 approval 桥接对这些调用整体失效。修复：全部提取 token 统一 `~`/`$HOME` 展开；`trash`（**可恢复**删除——freedesktop 回收站）从良性工具表移入写命令表，返回其位置参数（须全部落在 `allowPaths` 内，否则整体回退分类器）。不可恢复删除（`rm`/`shred`/`unlink`）仍不在白名单。spec 曾建议的「未识别命令出现绝对路径即提取」通用放宽被**明确否决**（包装脚本内部可 `curl | sh`——allowPath 信任边界击穿）。
 - README(en/zh) 安全边界与裁决缓存段同步。
+
+### 致谢
+- **WSL043** — [PR #2](https://github.com/log-li/dsh-automode/pull/2)：权限兼容层的 namespace-import + 运行时探测思路（v0.14.2 commit 共同署名，已列入包元数据）。
+- **xiaolinziwang** — [issue #1](https://github.com/log-li/dsh-automode/issues/1)：报告 Desktop 2.0.5 移除权限 setter 导出，促成降级不崩的修复。
 
 ## 上次发布（Previous release）
 
