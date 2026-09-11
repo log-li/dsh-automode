@@ -37,10 +37,12 @@ jobs:
       # publish tokens) switch to Trusted Publishing (OIDC) instead: configure
       # it on npmjs (Trusted Publishers → log-li/dsh-automode) and change the
       # line below to `npm publish --provenance` (drops NODE_AUTH_TOKEN).
-      - name: Publish to npm
-        run: npm publish
+      - name: Publish to npm (trusted publishing / OIDC; provenance signs the tarball)
+        run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # OIDC: trusts the npm Trusted Publisher configured for log-li/dsh-automode;
+        # NODE_AUTH_TOKEN is kept as a fallback when token-based publishing is used.
 
       - name: Create GitHub Release with changelog
         env:
