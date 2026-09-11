@@ -182,6 +182,27 @@ src/
   - **修复方向**：`bashWriteDestinations` 增加 `~` / `$HOME` 展开，并识别「包装脚本 + 路径参数」形态；至少在命令中出现绝对/home 路径时不应返回空集。
   - **修复落地（v0.13.0）**：`collectSegmentDestinations` 对全部参数 token 统一叠加 `expandHome`（`~` 展开）；`trash` 从良性工具表移入写命令表，`destinationsOf('trash')` 返回全部位置参数（**被删目标**）——trash 是可恢复删除（回收站），目标须全部在 `allowPaths` 内才信任。**否决**「未识别命令 + 出现绝对路径即提取」的通用放宽：脚本内部可 `curl | sh` 下载执行，提取其参数会击穿 allowPath 信任边界；仅识别语义确定的可恢复删除包装脚本。
 
+## 项目治理规范（对齐行业惯例，2026-09-12）
+
+**Changelog（Keep a Changelog）**
+- 顶部常驻 `## [Unreleased]` 段持续跟踪变更；发布时把 Unreleased 内容移入带日期的版本段（`## [x.y.z] - YYYY-MM-DD`，ISO 日期、新版在前）。
+- 变更按固定六类分组：`Added / Changed / Deprecated / Removed / Fixed / Security`（安全条目带头 CVE）；不新增第七类。
+- 版本标题链接到 compare diff；撤回版本标 `[YANKED]`；changelog 给人类 curated，不是 commit log 转储。
+
+**Commit（Conventional Commits 1.0）**
+- `<type>[scope]: desc`（body/footer 可选）；`fix`→PATCH、`feat`→MINOR、`BREAKING CHANGE:`（或 type 后 `!`）→MAJOR。
+- 类型：feat/fix/docs/ci/chore/refactor/perf/test 等；footer 用 git trailer（如 `Co-authored-by:`）。
+
+**Release notes（GitHub 惯例）**
+- 正文用**裸 `@username`**（不用 markdown 链接）——GitHub 自动渲染 Contributors 头像列表。
+- 结构：Highlights（用户可见变化）→ 各变更 `by @user` 归因 → New Contributors（首次贡献者单列）→ Contributors/Community。
+- 归因措辞用 `by @user`，不用 "Thanks @user"。
+
+**Contributors 与致谢（All Contributors 精神）**
+- `package.json contributors` = 代码/方法实际贡献者（包作者元数据）。
+- issue 报告（🐛）、文档（📖）、review（👀）等角色进 README Contributors 表（角色 emoji），与代码作者分开。
+- 致谢（Release/CHANGELOG 的 Thanks）可点名 issue 报告者，但不计入 package.json contributor。
+
 ## 发布流程（维护者，2026-09-12 起 Actions 自动化）
 
 1. **打 tag 前：CHANGELOG（双语单文件）该版本条目先把 `— unreleased` 改为发布日期**（发布即定稿，避免 tarball/Release notes 残留 unreleased；已发布包的快照不可改）。版本号就绪 + CHANGELOG 更新后：`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`（push tag 即触发 `.github/workflows/release.yml`；或 `workflow_dispatch` 手动跑当前 package.json 版本）。

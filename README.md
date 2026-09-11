@@ -235,7 +235,14 @@ node scripts/audit.mjs                 # report + contradiction-pair sentinel
 node scripts/audit.mjs --fail-on-pairs --limit 500 # exit 1 when pairs exist — pair `--limit` for a rolling window in CI/cron
 ```
 
-## System prompt shadowing
+## Contributors
+
+Thanks to everyone who contributed to @log.li/dsh-automode:
+
+| Contributor | Contribution |
+|---|---|
+| @WSL043 | 💻 compat-layer namespace-probe technique ([PR #2](https://github.com/log-li/dsh-automode/pull/2), co-author) |
+| @xiaolinziwang | 🐛 bug reports ([issue #1](https://github.com/log-li/dsh-automode/issues/1)) |
 
 When auto mode is active, the plugin shadows the approval-policy system prompt so the model sees "auto" instead of "ask". This tells the model that tool rejections come from the automated reviewer, not from a human. The model adjusts its retry strategy accordingly (try a smaller/safer action instead of asking the user).
 
