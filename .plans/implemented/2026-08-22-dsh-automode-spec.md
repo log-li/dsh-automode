@@ -152,7 +152,46 @@ src/
 
 - **分类器路由解析**：`resolveRoute` 优先级为 `config.classifier → session request header → agent.options`；`classifier.provider/model` 为空时，分类器跟随会话**实际模型**（当前为 DeepSeek），而不是 agent 默认模型。若会话模型本身重/不稳定（reasoning 高开销）导致频繁 `classifier returned no verdict`，建议**固定专用分类器路由**（`classifier.provider/model` 指向支持 `reasoningEffort: off/low` 的轻量非 reasoning 模型，如 `ocg-completions/ox-alpha-free` 或 `ocg/deepseek-v4-flash-vision-exp`）。
 
+- **裁决缓存签名两侧不一致 → 审批路径二次分类，且第二次看不到命令原文**（2026-09-11 实测复现，影响 v0.12.0）
+  - **症状**：同一动作在 pre-execute 门被判 allow（`decisions.jsonl` 写 `pre-execute-allow`），约 2 秒后 approval 路径却写 `decision outcome:rejected`，命令最终未执行。日志呈现「先放行、后否决」的矛盾对。
+  - **根因**：`VerdictCache.sig(toolName, reason, args, maxChars, intentHash)`（`cache.ts:36-42`）以 `args.command || reason` 作为签名主体，但两侧传入的 `args` 不同：
+
+    | 调用点 | 传入 args | 签名主体 |
+    |---|---|---|
+    | `pre-execute.ts:306` | `exec.arguments` | **命令原文** |
+    | `index.ts:169` | `undefined`（`index.ts:118`：approval path doesn't carry raw args） | **escalation reason 文本** |
+
+    两个 key 恒不相等 → 缓存 100% miss → approval 路径必然重新调用分类器。
+  - **放大器**：approval 路径的分类器输入 `promptInputOf({toolName, reason, userIntent})`（`index.ts:213`）**不含命令原文**；分类器只能凭 justification 散文 + 会话文本判断，于是从旧上下文里挑理由（实测产出「read_image 仍被硬阻断」「用户说过先别动」等已过时论断）并给出 reject。**信息更少的那次裁决反而覆盖信息更全的那次**，与决策链 ④「裁决缓存命中 → 复用」的设计意图相悖。
+  - **实测记录**（2026-09-11，session-b90da777，命令为 `~/bin/trash ~/.agents/skills/see-image`）：
+
+    ```
+    04:20:04  pre-execute-allow  "Deleting the user-explicitly-named obsolete see-image skill…"
+    04:20:06  decision  outcome=rejected
+    04:21:43  pre-execute-allow  "User explicitly authorized deleting these two named skill…"
+    04:21:45  decision  outcome=rejected
+    ```
+  - **修复方向**：`decideAuto` 改用 `callId` 作缓存 key（approval 桥接本已按 callId 记录），或在 approval 请求 payload 中透传原始 args；退一步也应让 approval 路径的分类器拿到命令原文。
+  - **临时绕法**：白名单内路径优先用 `write`/`edit` 文件工具（走 approval 桥接，零评审零分类器），不要用 bash 写命令。
+
+- **bash 写命令目标提取对「包装脚本 + `~` 路径」返回空 → allowPath 与桥接对 bash 整体失效**（2026-09-11 实测复现）
+  - **症状**：`pre-execute-bashop` 事件恒为 `bashDests=[]`，即使命令明确写了 `~/bin/trash ~/.agents/skills/see-image`。
+  - **后果**：allowPath 分支要求 `allowPathTargets.length > 0`（`pre-execute.ts:284`），因此 (a) 已在 `config.allowPaths` 中的 `~/.agents` **完全不参与判定**；(b) `bridge.record(exec.callId, …)`（`pre-execute.ts:295`）不执行 → approval 路径的确定性放行通道（`index.ts:137-149`）永不命中 → 只能落到上一条的二次分类，结果取决于两次分类是否一致。同日另一次会话安装 pptx skill 同为 `bashDests=[]`，但两次分类恰好都 allow → `allowed-once`，即**同类命令的成败取决于分类器抛硬币**。
+  - **修复方向**：`bashWriteDestinations` 增加 `~` / `$HOME` 展开，并识别「包装脚本 + 路径参数」形态；至少在命令中出现绝对/home 路径时不应返回空集。
+
 ## 变更历史
+
+### v0.13.0（2026-09-11，进行中）
+
+- **修复：approval 路径裁决缓存签名与 pre-execute 不一致**（「已知问题」首条，2026-09-11 实测）。
+  - 方案：`decideAuto` 按 `req.callId` 从 `deriveMessages()` 恢复**精确的 tool-call 块**（`b.type === 'tool-call' && b.id === callId`），取其 `arguments` 作为 `VerdictCache.sig` 的 args → 与 pre-execute 侧（`exec.arguments`）**同签名** → 同一次调用的 approval 路径命中 pre-execute 已写缓存，不再二次分类；恢复失败（callId 不在会话窗口 / 块缺失）回退 reason 签名（不劣于现状）。
+  - 放大器同步修复：恢复的 command 原文传入 `promptInputOf`（`PromptInput.command`）→ approval 路径分类器能看到命令原文；`classifyBand` 的 deny 频带检查也改用恢复的 args（命令原文进 deny 频带，审查更严）。
+  - 零内核改动：approval payload 仍不带 args（`dsh-user-approval` 的 `ApprovalRequest` 注释明示 arguments 不重复携带），从会话按 callId 恢复是纯插件侧等价方案。
+
+- **修复：bash 写命令目标提取对 `~` 与包装脚本返回空**（「已知问题」次条，2026-09-11 实测）。
+  - 方案 A：`collectSegmentDestinations` 的 expanded token 映射统一叠加 `expandHome`（`~`/`$HOME` 展开；`$HOME` 原已由 `expandShellVars` 处理，`~` 为新增）——覆盖 `~/bin/trash …`、`git clone <url> ~/dir`（原 git 分支只对 `-C`/repo 展开，clone 目标未展开）。
+  - 方案 B：`trash` 加入写命令白名单，`destinationsOf('trash', argv)` 返回**全部位置参数（被删目标）**。语义依据：`trash` 为可恢复删除（freedesktop 回收站），deny 频带仍最先硬拒 system 路径（`trash|mv /etc|/usr|…`），rm/shred 等不可恢复删除仍不在白名单；目标须**全部**在 `allowPaths` 内才信任（`every` 检查），否则整体回退分类器。
+  - **边界**：不做「未识别命令 + 出现绝对路径即提取」的通用放宽——`python3 install.py /trusted` 之类脚本内部可 `curl | sh` 下载执行，提取其参数即击穿 allowPath 信任边界；spec 2026-09-11 补记中的该建议方向**明确否决**，仅识别语义确定的可恢复删除包装脚本。
 
 ### v0.12.0（2026-09-10）
 - **版本支持声明**：peerDeps 显式化（`>=0.1.0-rc.6 <0.2.0`，语义同 `^0.1.0-rc.6` 但显式声明 0.2.0 未验证）；README(en/zh) 兼容性段落升级为版本矩阵；README 开头 dsh 加超链接指向 deepseek-harness repo。
