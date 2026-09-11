@@ -1,0 +1,58 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: # manual: publish the current package.json version
+
+permissions:
+  contents: write # create GitHub Release
+  id-token: write # OIDC (npm provenance / trusted publishing) when adopted
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke tests (gate — fail stops the release)
+        run: node scripts/smoke.test.mjs
+
+      - name: Bridge-flow check
+        run: node scripts/bridge-flow-check.mjs
+
+      # Publish to npm. Default path uses a classic/Automation token stored as
+      # the repo secret NPM_TOKEN. For the npm 2027 direction (no long-lived
+      # publish tokens) switch to Trusted Publishing (OIDC) instead: configure
+      # it on npmjs (Trusted Publishers → log-li/dsh-automode) and change the
+      # line below to `npm publish --provenance` (drops NODE_AUTH_TOKEN).
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release with changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="$GITHUB_REF_NAME"
+          : "${VER:?expected a tag ref (pushed tag v*) or set a version}"
+          python3 - "$VER" <<'PY' > /tmp/release-notes.md
+          import re, sys
+          ver = sys.argv[1].lstrip('v')
+          s = open('CHANGELOG.md').read()
+          m = re.search(rf'## \[{re.escape(ver)}\].*?(?=\n## \[|\Z)', s, re.S)
+          print(m.group(0).strip() if m else f'Release {sys.argv[1]} (see CHANGELOG.md)')
+          PY
+          gh release create "$VER" --title "Release $VER" --notes-file /tmp/release-notes.md

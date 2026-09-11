@@ -182,6 +182,13 @@ src/
   - **修复方向**：`bashWriteDestinations` 增加 `~` / `$HOME` 展开，并识别「包装脚本 + 路径参数」形态；至少在命令中出现绝对/home 路径时不应返回空集。
   - **修复落地（v0.13.0）**：`collectSegmentDestinations` 对全部参数 token 统一叠加 `expandHome`（`~` 展开）；`trash` 从良性工具表移入写命令表，`destinationsOf('trash')` 返回全部位置参数（**被删目标**）——trash 是可恢复删除（回收站），目标须全部在 `allowPaths` 内才信任。**否决**「未识别命令 + 出现绝对路径即提取」的通用放宽：脚本内部可 `curl | sh` 下载执行，提取其参数会击穿 allowPath 信任边界；仅识别语义确定的可恢复删除包装脚本。
 
+## 发布流程（维护者，2026-09-12 起 Actions 自动化）
+
+1. 版本号就绪 + CHANGELOG 更新后：`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`（push tag 即触发 `.github/workflows/release.yml`；或 `workflow_dispatch` 手动跑当前 package.json 版本）。
+2. Actions 门禁：build + smoke 80 项 + bridge-flow 全过后 → `npm publish`（token = repo secret `NPM_TOKEN`；2027 npm 方向：改 Trusted Publishing/OIDC + `npm publish --provenance`）→ 自动创建 GitHub Release（changelog 从 CHANGELOG.md 抽取）。
+3. 前置一次性配置：GitHub repo secret `NPM_TOKEN`（npmjs 生成 Automation token），或在 npmjs Trusted Publishers 配 OIDC。
+4. 发布前仍按全局规则：独立模型家族 review 通过才 push tag。
+
 ## 变更历史
 
 ### v0.14.4（2026-09-12，已完成）
