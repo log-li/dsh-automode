@@ -184,6 +184,23 @@ src/
 
 ## 变更历史
 
+### v0.14.4（2026-09-12，进行中）
+
+- **修复 glm-5.3-flash 独立 review 检出的两项不对称问题**（逐条核验采纳，2026-09-12）。
+  - **严重1：approval 路径 deny 扫描面 ≠ gate**。v0.13.0 恢复真实 args 后，`classifyBand`（`bands.ts`）以 `JSON.stringify(args)` 全量入 haystack——文件**内容**（content/new_string）进入 deny 扫描；而 gate 自 v0.11.1 起对文件工具**只扫目标路径**（`collectDenyPaths`，避免「文档提到敏感文件名算泄漏」的误伤）。后果：白名单内写入正文含敏感词 → approval 误拒 → allowPath 零评审契约被打破 + 制造「先 allow 后 reject」矛盾对（哨兵误报源）+ 两道防线 deny 语义分叉。
+    - **改法**：把「文件工具=扫路径、bash=扫命令文本」的 haystack 构造抽为共享 `denyHaystackFor`（`bands.ts`，`isFileTool`/`collectPaths`/`collectDenyPaths` 从 pre-execute 移入 bands 一起内聚），gate 与 `decideAuto` 的 `classifyBand` 复用同一构造——两线一致、内容不进 deny。属**收紧**（消误拒），路径级硬拒保留。
+  - **严重2：文件工具提权时分类器看不到目标路径**。`PromptInput` 无 `paths`；提权分支 `escReason` 仅含 justification；文件工具无 `command` → 分类器只见「提权+理由」，不知写哪个文件 → `write /etc/foo`+提权+无辜理由可盲 allow 并被缓存固化。v0.14.1 修了缓存 key（目录入 key）但没修分类器输入——key 与输入不对称。
+    - **改法**：`PromptInput.paths: string[]`；gate 填 `targetPaths`，approval 从 `restoreToolCallArgs` 恢复的 args 提取同一份（`collectPaths`），`buildUserMessage` 渲染。两侧同源 → v0.13.0 签名奇偶性不受影响。属**补全输入**（审更准），不放开边界。
+  - **中3**：`toolArgsKey` 逗号拼接可碰撞 → 改 `JSON.stringify([...dirs].sort())`。
+  - **中4**：spec v0.14.3 测试声明虚记 → **补正 spec 表述**（探测逻辑由 `probeSetter` 单测覆盖；降级形态为代码审查确认，不做 DI 重构——独立判断：收益低、侵入大，拒绝 review 的 DI 方案）。
+  - **中5**：文件工具（write+提权）gate/approval 签名奇偶性无测试 → 新增回归测试钉住。
+  - **中6**：`warnSetterMissing` 单布尔 → 改 per-name `Set`。
+  - **轻7**：pre-execute 死导入 `classifyBand` → 随本版清理（消除两套 deny 扫描分叉源头）。
+  - **轻10**：`classifyFailureCategory` 的 `reasoning effort` 裸子串过宽 → 收紧为完整短语匹配。
+  - **轻11**：README audit 段补 `--limit` 用法示例。
+  - **轻8 拒绝**（记录理由）：deny regex 每次 approval 重编译优化收益微乎其微，改预编译需扩 decideAuto 参数——性价比低，不做。
+  - **轻12 登记**（范围外，本期不修）：gate 不执行 deletionGuard、bridge 裸 callId 非会话隔离、`ls*` glob 宽匹配、allowPath 内 `git push --force` 跳过分类器——记入已知问题待后续评估。
+
 ### v0.14.3（2026-09-12，已完成）
 
 - **修复：权限包写操作 setter 仍直连命名导入 → 新宿主移除导出时加载期崩溃**（[issue #1](https://github.com/log-li/dsh-automode/issues/1)，xiaolinziwang，Desktop 2.0.5）。
