@@ -184,6 +184,13 @@ src/
 
 ## 变更历史
 
+### v0.14.3（2026-09-12，进行中）
+
+- **修复：权限包写操作 setter 仍直连命名导入 → 新宿主移除导出时加载期崩溃**（[issue #1](https://github.com/log-li/dsh-automode/issues/1)，xiaolinziwang，Desktop 2.0.5）。
+  - **背景**：v0.14.2 把 `permission-state.ts` 的 legacy **读**函数（`effective*`）改为 namespace-probe；但 `src/index.ts` 仍**直接命名导入**两个**写操作**：`setApprovalPolicy`（`@deepseek-ai/dsh-user-approval`）与 `setSandboxMode`（`@deepseek-ai/dsh-sandbox-policy`）。新宿主（Desktop 2.0.5 系）移除这些导出时，index.ts 在**模块实例化期** `SyntaxError`——插件整棵加载失败（issue #1 的报错即此形态）。
+  - **修复**：两个 setter 改为 **namespace import + 运行时探测**（复用 v0.14.2 的 probe 思路）；缺失时 `writeAutoModeKnobs`/`writeAutoMode` **降级**（跳过对应设置 + `logger.warn` 提示宿主 API 变化），**不崩**（与 fail-soft 一致）。
+  - 测试：`writeAutoMode` 在「setter 缺失」形态下不抛错、仅不写对应 knob；既有 75 项全绿。
+
 ### v0.14.2（2026-09-12，已完成）
 
 - **兼容层加固：吸收 PR #2 的 namespace-import + 运行时探测**（外部贡献 WSL043，2026-09-10）。
