@@ -6,6 +6,14 @@ export interface PromptInput {
     readonly environmentFacts: readonly string[];
     /** The user's most recent explicit instructions (CC-style intent). */
     readonly userIntent?: string;
+    /**
+     * The exact bash command text being decided, recovered by callId on the
+     * approval path (v0.13.0). The approval payload omits args, so the
+     * classifier previously judged from justification prose alone and could pick
+     * stale reasons from old context — the recovered command makes the
+     * approval-path decision as well-informed as the pre-execute gate's.
+     */
+    readonly command?: string;
 }
 /**
  * Build the system prompt: safety monitor role + operator rules + decision
@@ -21,4 +29,5 @@ export declare function promptInputOf(req: {
     toolName: string;
     reason?: string;
     userIntent?: string;
+    command?: string;
 }, allowRules: readonly string[], denyRules: readonly string[], environmentFacts: readonly string[]): PromptInput;

@@ -152,7 +152,7 @@ src/
 
 - **分类器路由解析**：`resolveRoute` 优先级为 `config.classifier → session request header → agent.options`；`classifier.provider/model` 为空时，分类器跟随会话**实际模型**（当前为 DeepSeek），而不是 agent 默认模型。若会话模型本身重/不稳定（reasoning 高开销）导致频繁 `classifier returned no verdict`，建议**固定专用分类器路由**（`classifier.provider/model` 指向支持 `reasoningEffort: off/low` 的轻量非 reasoning 模型，如 `ocg-completions/ox-alpha-free` 或 `ocg/deepseek-v4-flash-vision-exp`）。
 
-- **裁决缓存签名两侧不一致 → 审批路径二次分类，且第二次看不到命令原文**（2026-09-11 实测复现，影响 v0.12.0）
+- **裁决缓存签名两侧不一致 → 审批路径二次分类，且第二次看不到命令原文**（2026-09-11 实测复现，影响 v0.12.0；**v0.13.0 已修复**，见变更历史）
   - **症状**：同一动作在 pre-execute 门被判 allow（`decisions.jsonl` 写 `pre-execute-allow`），约 2 秒后 approval 路径却写 `decision outcome:rejected`，命令最终未执行。日志呈现「先放行、后否决」的矛盾对。
   - **根因**：`VerdictCache.sig(toolName, reason, args, maxChars, intentHash)`（`cache.ts:36-42`）以 `args.command || reason` 作为签名主体，但两侧传入的 `args` 不同：
 
@@ -172,26 +172,31 @@ src/
     04:21:45  decision  outcome=rejected
     ```
   - **修复方向**：`decideAuto` 改用 `callId` 作缓存 key（approval 桥接本已按 callId 记录），或在 approval 请求 payload 中透传原始 args；退一步也应让 approval 路径的分类器拿到命令原文。
+  - **修复落地（v0.13.0）**：`decideAuto` 按 `req.callId` 从 `deriveMessages()` 恢复精确的 tool-call 块（`restoreToolCallArgs`，`classifier.ts`）取回 `arguments`，作为 `VerdictCache.sig` 的 args → 与 pre-execute 侧同签名、同调用命中 `ALLOW`/`DENY` 缓存；恢复的 command 原文同时传入 `promptInputOf`（`PromptInput.command`）供 approval 分类器判断，deny 频带检查也改用恢复的 args。恢复失败（callId 在窗口外）回退原 reason 签名，不劣于现状。
   - **临时绕法**：白名单内路径优先用 `write`/`edit` 文件工具（走 approval 桥接，零评审零分类器），不要用 bash 写命令。
 
-- **bash 写命令目标提取对「包装脚本 + `~` 路径」返回空 → allowPath 与桥接对 bash 整体失效**（2026-09-11 实测复现）
+- **bash 写命令目标提取对「包装脚本 + `~` 路径」返回空 → allowPath 与桥接对 bash 整体失效**（2026-09-11 实测复现；**v0.13.0 已修复**，见变更历史）
   - **症状**：`pre-execute-bashop` 事件恒为 `bashDests=[]`，即使命令明确写了 `~/bin/trash ~/.agents/skills/see-image`。
   - **后果**：allowPath 分支要求 `allowPathTargets.length > 0`（`pre-execute.ts:284`），因此 (a) 已在 `config.allowPaths` 中的 `~/.agents` **完全不参与判定**；(b) `bridge.record(exec.callId, …)`（`pre-execute.ts:295`）不执行 → approval 路径的确定性放行通道（`index.ts:137-149`）永不命中 → 只能落到上一条的二次分类，结果取决于两次分类是否一致。同日另一次会话安装 pptx skill 同为 `bashDests=[]`，但两次分类恰好都 allow → `allowed-once`，即**同类命令的成败取决于分类器抛硬币**。
   - **修复方向**：`bashWriteDestinations` 增加 `~` / `$HOME` 展开，并识别「包装脚本 + 路径参数」形态；至少在命令中出现绝对/home 路径时不应返回空集。
+  - **修复落地（v0.13.0）**：`collectSegmentDestinations` 对全部参数 token 统一叠加 `expandHome`（`~` 展开）；`trash` 从良性工具表移入写命令表，`destinationsOf('trash')` 返回全部位置参数（**被删目标**）——trash 是可恢复删除（回收站），目标须全部在 `allowPaths` 内才信任。**否决**「未识别命令 + 出现绝对路径即提取」的通用放宽：脚本内部可 `curl | sh` 下载执行，提取其参数会击穿 allowPath 信任边界；仅识别语义确定的可恢复删除包装脚本。
 
 ## 变更历史
 
-### v0.13.0（2026-09-11，进行中）
+### v0.13.0（2026-09-11，已完成）
 
 - **修复：approval 路径裁决缓存签名与 pre-execute 不一致**（「已知问题」首条，2026-09-11 实测）。
   - 方案：`decideAuto` 按 `req.callId` 从 `deriveMessages()` 恢复**精确的 tool-call 块**（`b.type === 'tool-call' && b.id === callId`），取其 `arguments` 作为 `VerdictCache.sig` 的 args → 与 pre-execute 侧（`exec.arguments`）**同签名** → 同一次调用的 approval 路径命中 pre-execute 已写缓存，不再二次分类；恢复失败（callId 不在会话窗口 / 块缺失）回退 reason 签名（不劣于现状）。
   - 放大器同步修复：恢复的 command 原文传入 `promptInputOf`（`PromptInput.command`）→ approval 路径分类器能看到命令原文；`classifyBand` 的 deny 频带检查也改用恢复的 args（命令原文进 deny 频带，审查更严）。
   - 零内核改动：approval payload 仍不带 args（`dsh-user-approval` 的 `ApprovalRequest` 注释明示 arguments 不重复携带），从会话按 callId 恢复是纯插件侧等价方案。
+  - 实现：`restoreToolCallArgs` 导出自 `classifier.ts`（对象与 JSON 字符串两种 `arguments` 形态都解析）；`decideAuto` 顶部一次性 `deriveMessages()`，deny band / 缓存签名 / 分类器输入三处共用（intentHash 与 pre-execute 侧一致——意图窗口只含 user 消息，门与审批之间不会插入 user 消息）。
 
 - **修复：bash 写命令目标提取对 `~` 与包装脚本返回空**（「已知问题」次条，2026-09-11 实测）。
   - 方案 A：`collectSegmentDestinations` 的 expanded token 映射统一叠加 `expandHome`（`~`/`$HOME` 展开；`$HOME` 原已由 `expandShellVars` 处理，`~` 为新增）——覆盖 `~/bin/trash …`、`git clone <url> ~/dir`（原 git 分支只对 `-C`/repo 展开，clone 目标未展开）。
-  - 方案 B：`trash` 加入写命令白名单，`destinationsOf('trash', argv)` 返回**全部位置参数（被删目标）**。语义依据：`trash` 为可恢复删除（freedesktop 回收站），deny 频带仍最先硬拒 system 路径（`trash|mv /etc|/usr|…`），rm/shred 等不可恢复删除仍不在白名单；目标须**全部**在 `allowPaths` 内才信任（`every` 检查），否则整体回退分类器。
+  - 方案 B：`trash` 从良性工具表（原被当无目标良性命令跳过，是 `bashDests=[]` 的直接原因）移入写命令表，`destinationsOf('trash', argv)` 返回**全部位置参数（被删目标）**。语义依据：`trash` 为可恢复删除（freedesktop 回收站），deny 频带仍最先硬拒 system 路径（`trash|mv /etc|/usr|…`），rm/shred 等不可恢复删除仍不在白名单；目标须**全部**在 `allowPaths` 内才信任（`every` 检查），否则整体回退分类器。
   - **边界**：不做「未识别命令 + 出现绝对路径即提取」的通用放宽——`python3 install.py /trusted` 之类脚本内部可 `curl | sh` 下载执行，提取其参数即击穿 allowPath 信任边界；spec 2026-09-11 补记中的该建议方向**明确否决**，仅识别语义确定的可恢复删除包装脚本。
+  - 行为影响：复合命令（temp→swap 三步曲）中出现的 `(trash b; true)` 现在把 `b` 也计入目标集，allowPath 判定要求其同样在信任根内，否则整体回退分类器——比 v0.11.0 的「trash 搭车不复查」更严格且更安全；README(en/zh) 的安全边界段已同步。
+  - 测试：67 项 smoke 全过（新增 5 项：trash 目标提取 ×2、`~` 展开 ×1、`restoreToolCallArgs` ×2 + 签名一致性回归 ×1 并入 cache 段）。
 
 ### v0.12.0（2026-09-10）
 - **版本支持声明**：peerDeps 显式化（`>=0.1.0-rc.6 <0.2.0`，语义同 `^0.1.0-rc.6` 但显式声明 0.2.0 未验证）；README(en/zh) 兼容性段落升级为版本矩阵；README 开头 dsh 加超链接指向 deepseek-harness repo。

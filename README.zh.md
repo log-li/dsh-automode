@@ -150,9 +150,9 @@ pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来�
       - /Users/<you>/Library/CloudStorage/OneDrive-<tenant>/Projects/<proj>/Proposal/
 ```
 
-只有被识别的写命令才会被信任（删除类命令 `rm`/`trash` 绝不会被白名单放行）；路径在 symlink 解析后匹配，`/Users/<you>/OneDrive - …` 软链与真实 `Library/CloudStorage/…` 路径都可用。白名单目录内的 `git add`/`commit`/`push` 会把**仓库根**解析为写目标，因此对位于 allowPath 下的仓库做提交/推送也会跳过分类器（v0.11.1）。下面的裁决缓存修复仍然重要：即便没有 allowPath，你一旦显式授权某个动作，分类器也会带着你的意图重跑，而不是回放旧的缓存拒绝。
+只有被识别的写命令才会被信任；路径在 symlink 解析后匹配，`/Users/<you>/OneDrive - …` 软链与真实 `Library/CloudStorage/…` 路径都可用，且 `~`/`$HOME` 前缀会在匹配前展开（v0.13.0）。**不可恢复删除**（`rm`、`shred`、`unlink`）绝不会进入白名单；而经 `trash`（freedesktop 回收站）执行的**可恢复删除**可以（v0.13.0）——其目标会被提取，且**每一个**都必须解析到 allowPath 内，硬 `deny` 频带仍最先拒绝针对系统路径的 `trash`/`mv`。白名单目录内的 `git add`/`commit`/`push` 会把**仓库根**解析为写目标，因此对位于 allowPath 下的仓库做提交/推送也会跳过分类器（v0.11.1）。下面的裁决缓存修复仍然重要：即便没有 allowPath，你一旦显式授权某个动作，分类器也会带着你的意图重跑，而不是回放旧的缓存拒绝。
 
-**复合写命令（v0.11.0）**。临时文件→替换的导出三步曲（如 `DIR=…; cp a b_tmp && (trash b; true) && mv b_tmp "$DIR/b"`）现在会按段解析（含 `VAR=…` 赋值跟踪与 `$VAR` 展开），其目标仍能命中 `allowPaths`。`cd <dir>` 是受跟踪的良性导航命令——它更新有效工作目录（使后面的 `git add/commit/push` 据此解析仓库根），且不使快速路径失效（`cd -` 仍不可预测，回退分类器）。快速路径仍有守卫：复合命令若含副作用命令（`kill`、`pkill`、`rm`、`sh`、`bash`、网络/守护进程管理等）、命令替换（`` `…` ``、`$(…)`、`<(…)`）、文件重定向（`>file`、`>>file`、`2>file`）或写/良性集之外的任何命令，一律回退分类器，与之前行为一致。**fd-dup 重定向**（`2>&1`、`>&2`、`>&-`）不是文件写入，不使快速路径失效——所以 `git push … 2>&1 | tail` 仍可被白名单判定。复合内的良性工具（`trash`、`mkdir`、`echo` 等）随白名单快速路径搭车执行——一旦所有写目标都在白名单内，其副作用不再单独过分类器（删除目标本身永不进入白名单信任判定，`rm` 仍强制回退分类器）。改写历史的 git 命令（`reset --hard`、`clean`、`rebase`、`merge`）**刻意不**进入白名单信任。
+**复合写命令（v0.11.0）**。临时文件→替换的导出三步曲（如 `DIR=…; cp a b_tmp && (trash b; true) && mv b_tmp "$DIR/b"`）现在会按段解析（含 `VAR=…` 赋值跟踪与 `$VAR` 展开），其目标仍能命中 `allowPaths`。`cd <dir>` 是受跟踪的良性导航命令——它更新有效工作目录（使后面的 `git add/commit/push` 据此解析仓库根），且不使快速路径失效（`cd -` 仍不可预测，回退分类器）。快速路径仍有守卫：复合命令若含副作用命令（`kill`、`pkill`、`rm`、`sh`、`bash`、网络/守护进程管理等）、命令替换（`` `…` ``、`$(…)`、`<(…)`）、文件重定向（`>file`、`>>file`、`2>file`）或写/良性集之外的任何命令，一律回退分类器，与之前行为一致。**fd-dup 重定向**（`2>&1`、`>&2`、`>&-`）不是文件写入，不使快速路径失效——所以 `git push … 2>&1 | tail` 仍可被白名单判定。复合内的良性工具（`mkdir`、`echo` 等）随白名单快速路径搭车执行——一旦所有写目标都在白名单内，其副作用不再单独过分类器。`rm` 仍强制回退分类器；而 v0.13.0 起，`trash` 出现在复合命令中时其可恢复删除目标会加入目标集，与普通写目标一样接受白名单判定（全部须在信任根内，否则整体回退分类器）。改写历史的 git 命令（`reset --hard`、`clean`、`rebase`、`merge`）**刻意不**进入白名单信任。
 
 **零确认提权（v0.10.0）**。allowlist 路径意味着**全信任**：请求放宽沙箱（`sandbox_permissions: danger-full-access`）进入 allowlist 路径的调用现在**无需任何确认、不经分类器直接放行**——pre-execute 门已确定性证明所有目标都在 `allowPath` 内，该结论通过调用的 `callId` 传给 approval answerer（审计日志呈现 `curated allowPath` → `approval-bridge` → `decision allowed-once`）。deny 频带仍最先执行（`~/.ssh/` 等 deny 路径即便在 allowPath 内也硬拒），熔断器也不会被绕过——跳闸期间 allowlist 调用仍走人工。
 
@@ -213,7 +213,7 @@ routine 类别（install/build/test/文件编辑/git add/commit/status）只是*
 
 ### 裁决缓存
 
-分类器 verdict 按会话的 **tool + 命令 + 用户意图** 签名缓存。用户最近直接指示——**打字消息与 `ask_user_question` 答案**——会被 hash 进签名，因此一次新的显式授权（新的人类消息或工具型授权）会使旧的缓存 verdict 失效、分类器带着新意图重跑——**用户的授权绝不会被缓存的 `DENY` 吞掉**。在同一意图窗口内，重复动作仍会复用缓存 verdict，不再二次 LLM 调用。缓存条目 5 分钟后过期。
+分类器 verdict 按会话的 **tool + 命令 + 用户意图** 签名缓存。用户最近直接指示——**打字消息与 `ask_user_question` 答案**——会被 hash 进签名，因此一次新的显式授权（新的人类消息或工具型授权）会使旧的缓存 verdict 失效、分类器带着新意图重跑——**用户的授权绝不会被缓存的 `DENY` 吞掉**。在同一意图窗口内，重复动作仍会复用缓存 verdict，不再二次 LLM 调用。pre-execute 门与 approval 路径现在用**同一份命令原文**签名——approval 路径按 `callId` 从会话恢复该工具调用的真实参数（审批 payload 不携带参数），因此提权调用会命中门的裁决，而不是被第二次分类（v0.13.0）。缓存条目 5 分钟后过期。
 
 ## 日志
 

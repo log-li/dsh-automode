@@ -73,6 +73,26 @@ export interface ClassifyOptions {
  */
 export declare function renderTranscript(messages: readonly Message[], maxMessages: number): string;
 /**
+ * Restore the raw arguments of ONE specific tool call, matched by its callId
+ * (v0.13.0, cache-signature parity fix).
+ *
+ * The `approval/request` payload deliberately omits arguments
+ * (`ApprovalRequest` in dsh-user-approval: "callId links to an already
+ * presented tool call, so arguments are not duplicated here"), so `decideAuto`
+ * previously signed the verdict cache with the escalation-reason text while
+ * the pre-execute gate signed with the real command text — the keys never
+ * matched, every approval-path lookup missed, and a SECOND classifier run with
+ * LESS information overrode the gate's better-informed verdict.
+ *
+ * The exact tool call is still in the session when the approval is decided, so
+ * we recover its `arguments` here to keep both signatures identical. Returns
+ * the parsed arguments object (same shape the pre-execute gate passes, i.e. an
+ * object whose `command` is the command text), or `undefined` when the call is
+ * outside the window or unparseable — callers then fall back to the legacy
+ * reason-based signature (no worse than before).
+ */
+export declare function restoreToolCallArgs(messages: readonly Message[], callId: string | undefined): unknown;
+/**
  * Render the user's RECENT explicit instructions (CC-style intent).
  *
  * Unlike the full transcript, this keeps only the most recent `maxMessages`

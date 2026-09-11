@@ -127,11 +127,16 @@ function lastPositional(argv: string[]): string | undefined {
 /**
  * Bash write-commands that write files at an explicit destination path
  * (used for the curated allowPath trust check on non-file tools).
- * Deletion commands (`rm`, `shred`, `unlink`, `trash`) are intentionally
- * NOT here — allowPaths trust never authorizes removal.
+ * Irrecoverable deletion commands (`rm`, `shred`, `unlink`) are intentionally
+ * NOT here — allowPaths trust never authorizes removal. `trash` IS here
+ * (v0.13.0): it is a RECOVERABLE delete (freedesktop trash / trash-cli), the
+ * deny band still hard-rejects `trash|mv` against system paths before this
+ * table is consulted, and `destinationsOf('trash')` returns every positional
+ * target so the allowPath check requires ALL of them inside the trusted roots
+ * (otherwise the whole call falls back to the classifier).
  */
 const BASH_WRITE_COMMANDS = new Set([
-  'cp', 'mv', 'rsync', 'ditto', 'install', 'tar', 'unzip', 'unar', 'curl', 'wget', 'git',
+  'cp', 'mv', 'rsync', 'ditto', 'install', 'tar', 'unzip', 'unar', 'curl', 'wget', 'git', 'trash',
 ]);
 
 /**
@@ -147,7 +152,7 @@ const BASH_WRITE_COMMANDS = new Set([
 const BENIGN_UTILITY_COMMANDS = new Set([
   'echo', 'printf', 'ls', 'mkdir', 'test', '[', 'true', 'false', 'pwd',
   'stat', 'file', 'wc', 'head', 'tail', 'which', 'dirname', 'basename',
-  'date', 'sleep', 'uname', 'id', 'du', 'df', 'sort', 'uniq', 'cat', 'trash',
+  'date', 'sleep', 'uname', 'id', 'du', 'df', 'sort', 'uniq', 'cat',
 ]);
 
 /**
@@ -267,6 +272,16 @@ function hasUnquotedRedirect(seg: string): boolean {
  * repository root, resolved from an explicit `-C <dir>` else from `cwd`. */
 function destinationsOf(base: string, argv: string[], cwd: string): string[] {
   switch (base) {
+    case 'trash': {
+      // Recoverable delete (freedesktop trash / trash-cli, v0.13.0): every
+      // positional argument is a TARGET moved to the recycle bin. The allowPath
+      // check treats targets like write destinations: ALL of them must resolve
+      // inside config.allowPaths, otherwise the whole call falls back to the
+      // classifier. Irrecoverable deletes (`rm`, `shred`, `unlink`) are not in
+      // BASH_WRITE_COMMANDS at all, and the deny band still hard-rejects
+      // trash/mv against system paths before this table is reached.
+      return argv.filter((a) => !a.startsWith('-'));
+    }
     case 'cp':
     case 'mv':
     case 'rsync':
@@ -409,7 +424,13 @@ function collectSegmentDestinations(
     if (hasUnquotedRedirect(seg)) return false;
     const tokens = tokenizeShell(seg);
     if (tokens.length === 0) continue;
-    const expanded = tokens.map((t) => expandShellVars(t, vars));
+    // v0.13.0: `~` tilde expansion on every token (in addition to `$HOME`,
+    // which `expandShellVars` already resolves via the tracked vars map), so
+    // write destinations like `~/bin/trash …`, `git clone <url> ~/dir` and
+    // `cp a ~/dst` resolve to real paths before the allowPath check. Only
+    // leading `~`/`~/$HOME` forms expand; `~user` stays literal (and then fails
+    // realpath, falling back to the classifier — safe).
+    const expanded = tokens.map((t) => expandHome(expandShellVars(t, vars)));
     const first = expanded[0] ?? '';
     const base = first.split('/').pop() ?? first;
     if (!BASH_WRITE_COMMANDS.has(base)) {

@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findAllowRule, findDenyRule, isAllowlisted, patternMatches } from '../lib/rules.js';
-import { parseVerdict, renderTranscript, renderUserIntent } from '../lib/classifier.js';
+import { parseVerdict, renderTranscript, renderUserIntent, restoreToolCallArgs } from '../lib/classifier.js';
 import { buildSystemPrompt, buildUserMessage } from '../lib/prompt.js';
 import { isAuto, writeAutoMode } from '../lib/index.js';
 import { Breaker } from '../lib/breaker.js';
@@ -147,6 +147,34 @@ test('renderTranscript renders tool calls and results', () => {
   const out = renderTranscript(messages, 10);
   assert.ok(out.includes('[tool call: read {"path":"a.txt"}]'));
   assert.ok(out.includes('[tool result: file contents]'));
+});
+
+console.log('restoreToolCallArgs (v0.13.0 cache-signature parity on the approval path)');
+test('recovers arguments of the exact callId (object and JSON-string forms)', () => {
+  const messages = [
+    {
+      role: 'assistant',
+      content: [
+        { type: 'tool-call', name: 'bash', arguments: '{"command":"read_config"}', id: 'other' },
+        { type: 'tool-call', name: 'bash', arguments: '{"command":"trash ~/.agents/skills/see-image","description":"remove obsolete skill"}', id: 'c1' },
+        { type: 'tool-call', name: 'bash', arguments: { command: 'cp a /dst' }, id: 'c2' },
+      ],
+    },
+  ];
+  assert.deepEqual(restoreToolCallArgs(messages, 'c1'), {
+    command: 'trash ~/.agents/skills/see-image',
+    description: 'remove obsolete skill',
+  });
+  assert.deepEqual(restoreToolCallArgs(messages, 'c2'), { command: 'cp a /dst' });
+  assert.equal(restoreToolCallArgs(messages, 'missing'), undefined);
+  assert.equal(restoreToolCallArgs(messages, undefined), undefined);
+});
+test('a call outside the window and an unparseable payload fall back safely', () => {
+  assert.equal(restoreToolCallArgs([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], 'c1'), undefined);
+  assert.equal(
+    restoreToolCallArgs([{ role: 'assistant', content: [{ type: 'tool-call', name: 'bash', arguments: '{not-json', id: 'c1' }] }], 'c1'),
+    '{not-json', // caller then falls back to the reason-based signature
+  );
 });
 
 console.log('renderUserIntent (tool-based authorization, spec 2026-08-31)');
@@ -404,6 +432,23 @@ test('cache get/put respects the intent-hashed signature', () => {
   assert.equal(c.get(sid, s1), 'DENY');
   assert.equal(c.get(sid, s2), null); // new intent → cache miss (user grant re-classifies)
 });
+test('v0.13.0: approval-path sig (recovered args) matches pre-execute sig — reason text is not part of the key', () => {
+  // Regression for the 2026-09-11 double-classification bug: the pre-execute
+  // gate signs with the command text, the approval path used to sign with the
+  // escalation-reason text (args=undefined) → keys never matched → 100% cache
+  // miss → a second, worse-informed classifier run. Once the approval path
+  // recovers the real args (restoreToolCallArgs), both keys must be identical
+  // even when the reason strings differ.
+  const intent = hashString('user asked to remove the obsolete skill');
+  const gateSig = VerdictCache.sig('bash', 'escalate sandbox to workspace-write: remove obsolete skill', { command: '~/bin/trash ~/.agents/skills/see-image' }, 200, intent);
+  const approvalSig = VerdictCache.sig('bash', 'a completely different justification', { command: '~/bin/trash ~/.agents/skills/see-image' }, 200, intent);
+  assert.equal(approvalSig, gateSig);
+  // And the cache write from the gate is hit by the approval path:
+  const c = new VerdictCache();
+  const sid = 's-callid';
+  c.put(sid, gateSig, 'ALLOW');
+  assert.equal(c.get(sid, approvalSig), 'ALLOW');
+});
 
 console.log('bands.js (bashWriteDestinations)');
 test('cp/mv destination is the last positional', () => {
@@ -443,12 +488,32 @@ test('git clone target dir', () => {
   );
   assert.deepEqual(bashWriteDestinations('git clone https://github.com/x/y'), []);
 });
-test('non-write commands and deletion are NOT allowlisted', () => {
+test('non-write commands and IRRECOVERABLE deletion are NOT allowlisted', () => {
   assert.deepEqual(bashWriteDestinations('ls /Users/x/OneDrive/Proposal'), []);
   assert.deepEqual(bashWriteDestinations('cat /etc/passwd'), []);
   assert.deepEqual(bashWriteDestinations('rm -rf /Users/x/OneDrive/Proposal'), []);
   assert.deepEqual(bashWriteDestinations('rm /Users/x/OneDrive/Proposal/f'), []);
-  assert.deepEqual(bashWriteDestinations('trash /Users/x/OneDrive/Proposal/f'), []);
+});
+test('v0.13.0: recoverable `trash` targets ARE extracted for allowPath', () => {
+  // trash (freedesktop recycle bin) is a recoverable delete: its positional
+  // targets are extracted so the allowPath gate requires ALL of them inside the
+  // trusted roots (system paths stay hard-denied; rm/shred stay unextracted).
+  assert.deepEqual(bashWriteDestinations('trash /Users/x/OneDrive/Proposal/f'), ['/Users/x/OneDrive/Proposal/f']);
+  assert.deepEqual(bashWriteDestinations('trash f1 f2'), ['f1', 'f2']);
+  assert.deepEqual(bashWriteDestinations('trash -f /Users/x/OneDrive/Proposal/f'), ['/Users/x/OneDrive/Proposal/f']);
+});
+test('v0.13.0: `~` tilde expansion on write destinations (incl. wrapper scripts)', () => {
+  const home = process.env.HOME;
+  assert.ok(home, 'HOME must be set for tilde tests');
+  assert.deepEqual(bashWriteDestinations('cp a ~/dst'), [join(home, 'dst')]);
+  assert.deepEqual(
+    bashWriteDestinations('~/bin/trash ~/.agents/skills/see-image'),
+    [join(home, '.agents/skills/see-image')],
+  );
+  assert.deepEqual(
+    bashWriteDestinations('git clone https://github.com/x/y ~/OneDrive/repo'),
+    [join(home, 'OneDrive/repo')],
+  );
 });
 test('redirect/empty commands are skipped', () => {
   assert.deepEqual(bashWriteDestinations('echo hi > /Users/x/OneDrive/Proposal/f'), []);
@@ -519,7 +584,10 @@ test('command substitution (backtick / $() / <()) is never allowPath-trusted', (
   assert.deepEqual(bashWriteDestinations('D=/x; cp a "$D/f"'), ['/x/f']);
 });
 test('benign utilities ride along the composite fast path (documented semantics)', () => {
-  assert.deepEqual(bashWriteDestinations('cp a /dest && trash /x/f'), ['/dest']);
+  // v0.13.0: `trash` is no longer a benign ride-along — its targets are
+  // extracted too, so both the cp write-destination and the trash target must
+  // be inside the trusted roots for the composite to take the allowPath path.
+  assert.deepEqual(bashWriteDestinations('cp a /dest && trash /x/f'), ['/dest', '/x/f']);
   assert.deepEqual(bashWriteDestinations('cp a /dest && mkdir -p /x'), ['/dest']);
 });
 test('quoted separators inside filenames are not split points', () => {
