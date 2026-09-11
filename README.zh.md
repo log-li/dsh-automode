@@ -139,7 +139,7 @@ pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来�
 
 ### 信任额外目录（`allowPaths`）
 
-`allowPaths` 是用户 curated 的**全信任**列表：目标解析后落在其中任一目录内的文件操作与 bash 写命令，完全跳过安全分类器（日志记为 `pre-execute-allow` / `curated allowPath`）。随插件发布的默认只保留通用 `/tmp/`——**个人目录改在 profile 的 `cordis.patch.yml` 配置**。loader patch 会整体替换目标行的 `config`，所以下面的最小覆写只设 `allowPaths`（其余字段回退到插件代码默认值）：
+`allowPaths` 是用户 curated 的**全信任**列表：目标解析后落在其中任一目录内的文件操作与 bash 写命令，完全跳过安全分类器（日志记为 `pre-execute-allow` / `curated allowPath`；工作区内目标带提权请求的另行记为 `workspace in-tree escalation`，v0.14.0）。随插件发布的默认只保留通用 `/tmp/`——**个人目录改在 profile 的 `cordis.patch.yml` 配置**。loader patch 会整体替换目标行的 `config`，所以下面的最小覆写只设 `allowPaths`（其余字段回退到插件代码默认值）：
 
 ```yaml
 # ~/.dsh/profiles/<profile>/cordis.patch.yml
@@ -154,7 +154,7 @@ pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来�
 
 **复合写命令（v0.11.0）**。临时文件→替换的导出三步曲（如 `DIR=…; cp a b_tmp && (trash b; true) && mv b_tmp "$DIR/b"`）现在会按段解析（含 `VAR=…` 赋值跟踪与 `$VAR` 展开），其目标仍能命中 `allowPaths`。`cd <dir>` 是受跟踪的良性导航命令——它更新有效工作目录（使后面的 `git add/commit/push` 据此解析仓库根），且不使快速路径失效（`cd -` 仍不可预测，回退分类器）。快速路径仍有守卫：复合命令若含副作用命令（`kill`、`pkill`、`rm`、`sh`、`bash`、网络/守护进程管理等）、命令替换（`` `…` ``、`$(…)`、`<(…)`）、文件重定向（`>file`、`>>file`、`2>file`）或写/良性集之外的任何命令，一律回退分类器，与之前行为一致。**fd-dup 重定向**（`2>&1`、`>&2`、`>&-`）不是文件写入，不使快速路径失效——所以 `git push … 2>&1 | tail` 仍可被白名单判定。复合内的良性工具（`mkdir`、`echo` 等）随白名单快速路径搭车执行——一旦所有写目标都在白名单内，其副作用不再单独过分类器。`rm` 仍强制回退分类器；而 v0.13.0 起，`trash` 出现在复合命令中时其可恢复删除目标会加入目标集，与普通写目标一样接受白名单判定（全部须在信任根内，否则整体回退分类器）。改写历史的 git 命令（`reset --hard`、`clean`、`rebase`、`merge`）**刻意不**进入白名单信任。
 
-**零确认提权（v0.10.0）**。allowlist 路径意味着**全信任**：请求放宽沙箱（`sandbox_permissions: danger-full-access`）进入 allowlist 路径的调用现在**无需任何确认、不经分类器直接放行**——pre-execute 门已确定性证明所有目标都在 `allowPath` 内，该结论通过调用的 `callId` 传给 approval answerer（审计日志呈现 `curated allowPath` → `approval-bridge` → `decision allowed-once`）。deny 频带仍最先执行（`~/.ssh/` 等 deny 路径即便在 allowPath 内也硬拒），熔断器也不会被绕过——跳闸期间 allowlist 调用仍走人工。
+**零确认提权（v0.10.0）**。allowlist 路径意味着**全信任**：请求放宽沙箱（`sandbox_permissions: danger-full-access`）进入 allowlist 路径的调用现在**无需任何确认、不经分类器直接放行**——pre-execute 门已确定性证明所有目标都在 `allowPath` 内，该结论通过调用的 `callId` 传给 approval answerer（审计日志呈现 `curated allowPath` → `approval-bridge` → `decision allowed-once`；工作区内提权则呈现 `workspace in-tree escalation`，v0.14.0）。deny 频带仍最先执行（`~/.ssh/` 等 deny 路径即便在 allowPath 内也硬拒），熔断器也不会被绕过——跳闸期间 allowlist 调用仍走人工。
 
 **不是文件沙箱豁免**。`allowPaths` 只跳过**本插件**的评审——DSH 文件沙箱（会话文件策略）是独立一层，仍然生效。写 **workspace 外**的 allowlist 目录会被沙箱拦截，除非调用带 `sandbox_permissions: danger-full-access`；而该提权对 allowlist 路径经 approval 桥接**零评审自动放行**——所以第一次尝试就直接带上提权即可。
 
@@ -209,7 +209,7 @@ routine 类别（install/build/test/文件编辑/git add/commit/status）只是*
 
 拒绝时，提示会回显**审查者的拒绝理由 + 模型自身在工具调用里写的操作解释（justification）**，让模型看清被拒的是什么、如何改造成更安全的形式。随后指示模型尝试更安全方案；若**没有更安全方案存在**，则**停止重试并询问用户明确许可**——被拒绝的动作会一直失败，只有用户明确批准，后续尝试才可能通过（分类器经 `<recent_user_intent>` 权衡用户的最近显式意图）。
 
-每次分类器流失败（抛异常**或** `error` finish chunk）都会写入 DSH 日志（带解析后的路由、effort、底层错误 code/message、模型原始输出），并作为 `classifier-fail` 事件写入 `decisions.jsonl`——反复出现的 `classifier returned no verdict` 直接从审计记录即可诊断。若路由拒绝配置的 `reasoningEffort`（例如只支持 `off` 的路由收到 `low`），调用会先重试不传 effort 再判定失败。
+每次分类器流失败（抛异常**或** `error` finish chunk）都会写入 DSH 日志（带解析后的路由、effort、底层错误 code/message、模型原始输出），并作为 `classifier-fail` 事件写入 `decisions.jsonl`——反复出现的 `classifier returned no verdict` 直接从审计记录即可诊断。若路由拒绝配置的 `reasoningEffort`（例如只支持 `off` 的路由收到 `low`），调用会先重试不传 effort 再判定失败。模型侧看到的拒绝提示现在会区分**配置性**问题（未配路由 / 路由拒绝配置的 effort——v0.14.0：修复 `classifier.provider/model` 或模型元数据，重试无用）与**瞬时**问题（429 / 5xx / 超时——稍后重试）。
 
 ### 裁决缓存
 
@@ -224,13 +224,15 @@ routine 类别（install/build/test/文件编辑/git add/commit/status）只是*
 - `outcome` — allowed-once / rejected / cancelled
 - `tool` — 工具名
 - `tier` — deny / allow / classify:monitor / classify:cache / classify:fail / ...
-- `detail` — 人类可读理由
+- `callId` — 被裁决的精确工具调用（approval 路径 `decision` 事件，v0.14.0）——可与其 pre-execute 记录精确 join，做两阶段审计
+- `detail` — 人类可读理由（deny 命中现附命令/目标上下文，v0.14.0）
 - `sessionId` — 会话标识
 
-用复盘脚本分析日志、识别规则优化机会：
+用复盘脚本分析日志、检测 allow→reject 矛盾对回归特征、识别规则优化机会（v0.14.0）：
 
 ```bash
-node scripts/auto-mode-review.mjs
+node scripts/audit.mjs                  # 报告 + 矛盾对哨兵
+node scripts/audit.mjs --fail-on-pairs  # 存在矛盾对时 exit 1（CI/cron 告警）
 ```
 
 ## 系统提示影子化

@@ -183,15 +183,17 @@ src/
 
 ## 变更历史
 
-### v0.14.0（2026-09-11，进行中）
+### v0.14.0（2026-09-11，已完成）
 
 - **审计复盘：矛盾对哨兵 + 决策统计（A）**。基于 2026-09-11 对 `decisions.jsonl`（4700 条，08-22→09-11）的复盘：17 条 `decision rejected` **全部**呈现「同 session 同 tool 的 `pre-execute-allow` 在 ≤60s 前出现」的矛盾对形态——即 v0.13.0 修复的 Bug 1/2 症状在 08-25 起系统性存在（17 对全部是用户明确要求的合法操作被二次分类否决）。新增 `scripts/audit.mjs` 复盘脚本：扫描 decisions.jsonl，输出事件分布 / 工具构成 / **矛盾对检测（>0 即告警，防回归）** / failClosed 拒因归类；独立工具，不改变运行时。
+  - 落地：`detectContradictionPairs` / `loadDecisions` / `summarize` 导出可测；CLI 支持 `--fail-on-pairs`（存在矛盾对 exit 1，CI/cron 哨兵）与 `--limit N`；对真实历史数据验证输出 17 对（gap 2–4s，全部为 v0.13.0 前记录）。
 - **审计可追溯增强（E）**：
   - `pre-execute-deny` 事件补命令上下文：bash 带 `cmdHead`、文件工具带 `targets`（原只有匹配的 deny pattern，无法事后判断 `credentials`×18、`.env`×7 等命中是否为误伤）。
   - `decision` 事件带 `callId`（原无，矛盾的两次裁决只能靠时间窗近似 join）。
-  - **in-tree 提权事件语义修正**：pre-execute 的 `trustRoots` 把 session cwd 并入 roots（`pre-execute.ts:70`），导致「工作区内 + 带 `sandbox_permissions`」的文件操作也命中 allowPath 分支，事件却记为 `curated allowPath`——审计会误读为「config.allowPaths 命中」。改为区分 `configured allowPath` 与 `workspace (in-tree escalation)` 两种 detail；行为不变（均确定性放行 + 桥接）。
-- **分类器不可用提示分类（C）**：复盘发现 10 次 `classifier-fail` 全为外部/配置问题——429 配额（ocg 路由）与 `UNSUPPORTED_REASONING_EFFORT`（ollama 路由 4 次）。后者根因在 dsh-llm adapter：不传 effort 时仍校验模型元数据默认值（`dsh-session-persistence-jsonl/worker.cjs:4849-4853`），ollama 模型元数据缺失 → 回退重试也失败——**非插件回退逻辑 bug**，属部署配置。`classifierUnavailableText`（index.ts 与 pre-execute.ts 两份）增加 `UNSUPPORTED_REASONING_EFFORT` 识别：提示「分类器路由不支持该 reasoningEffort，请检查 `classifier.provider/model` 或模型元数据 / 换路由」，而不是误导性的「temporarily unavailable」。
+  - **in-tree 提权事件语义修正**：pre-execute 的 `trustRoots` 把 session cwd 并入 roots（`pre-execute.ts:70`），导致「工作区内 + 带 `sandbox_permissions`」的文件操作也命中 allowPath 分支，事件却记为 `curated allowPath`——审计会误读为「config.allowPaths 命中」。改为区分 `curated allowPath`（命中 `config.allowPaths`）与 `workspace in-tree escalation (session cwd in trust roots)`；行为不变（均确定性放行 + 桥接）。
+- **分类器不可用提示分类（C）**：复盘发现 10 次 `classifier-fail` 全为外部/配置问题——429 配额（ocg 路由）与 `UNSUPPORTED_REASONING_EFFORT`（ollama 路由 4 次）。后者根因在 dsh-llm adapter：不传 effort 时仍校验模型元数据默认值（`dsh-session-persistence-jsonl/worker.cjs:4849-4853`），ollama 模型元数据缺失 → 回退重试也失败——**非插件回退逻辑 bug**，属部署配置。实现：`classifier.ts` 导出 `classifyFailureCategory`（`config:no-route` / `config:unsupported-effort` / `transient:{timeout,rate-limit,overload,server,connection}` / `unknown`），index.ts 与 pre-execute.ts 的 `classifierUnavailableText` 共用：配置性问题给出「修复 provider/model 或换路由，重试无用」指引，取代误导性的「temporarily unavailable」；`no classifier route` 也从通用文案细化为配置指引。
 - **复现记录：B 候选否决（性能优化不成立）**。复盘初判「edit 承担 86% 分类器调用（2746/3224）」经复现修正：`pre-execute-allow` 细分实为 in-tree 快捷 2328 / 缓存 ALLOW 415 / **真分类器 350** / allow 频带 70 / allowPath 66。in-tree 提权调用实际已被「roots 含 cwd」的 allowPath 分支**确定性放行**（复现：同目标 edit 带/不带 `sandbox_permissions` 均零 LLM 放行），并非进了分类器；真分类器 350 次/20 天的 edit（217 条）全是 `~/.agents` 等 out-of-tree 正常审核（allowPaths 配置 08-31 后才覆盖）。→ **无性能优化空间，不做决策链变更**；本版改进收敛到审计（A/E）与提示（C）。
+- 测试：70 项 smoke 全过（新增 3：矛盾对检测 ×2、classifyFailureCategory 分类 ×1）+ bridge flow 4 断言；README(en/zh) 日志段（callId / deny 上下文 / audit 脚本）与 allowPaths 语义段同步；`auto-mode-review.mjs` 死引用（README 遗留，脚本早已不存在）替换为 `scripts/audit.mjs`。
 
 ### v0.13.0（2026-09-11，已完成）
 

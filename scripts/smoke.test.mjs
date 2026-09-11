@@ -679,4 +679,41 @@ test('clear empties the bridge', () => {
   assert.equal(b.take('call-1', 'write'), undefined);
 });
 
+console.log('audit.mjs (v0.14.0 contradiction-pair sentinel)');
+import { detectContradictionPairs } from './audit.mjs';
+test('detects allow→reject pairs within the window (v0.13.0 regression signature)', () => {
+  const rows = [
+    { event: 'pre-execute-allow', at: '2026-09-11T04:20:04.000Z', sessionId: 's1', tool: 'bash', detail: 'allowed' },
+    { event: 'decision', at: '2026-09-11T04:20:06.000Z', sessionId: 's1', tool: 'bash', outcome: 'rejected' },
+    // unrelated allow in another session, and an old allow (>60s) must NOT pair
+    { event: 'pre-execute-allow', at: '2026-09-11T04:20:05.000Z', sessionId: 's2', tool: 'bash', detail: 'other session' },
+    { event: 'pre-execute-allow', at: '2026-09-10T04:00:00.000Z', sessionId: 's1', tool: 'bash', detail: 'stale' },
+  ];
+  const pairs = detectContradictionPairs(rows);
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].reject.at, '2026-09-11T04:20:06.000Z');
+  assert.equal(pairs[0].allow.detail, 'allowed');
+});
+test('allowed-once decisions never produce pairs', () => {
+  const rows = [
+    { event: 'pre-execute-allow', at: '2026-09-11T04:20:04.000Z', sessionId: 's1', tool: 'bash' },
+    { event: 'decision', at: '2026-09-11T04:20:05.000Z', sessionId: 's1', tool: 'bash', outcome: 'allowed-once' },
+  ];
+  assert.equal(detectContradictionPairs(rows).length, 0);
+});
+
+console.log('classifyFailureCategory (v0.14.0 config-vs-transient hints)');
+import { classifyFailureCategory } from '../lib/classifier.js';
+test('distinguishes config problems from transient failures', () => {
+  assert.equal(classifyFailureCategory('no classifier route'), 'config:no-route');
+  assert.equal(
+    classifyFailureCategory('provider "ollama" model "deepseek-v4.1-flash" does not support reasoning effort "off" [UNSUPPORTED_REASONING_EFFORT]'),
+    'config:unsupported-effort',
+  );
+  assert.equal(classifyFailureCategory('OpenAI API error (429): rate limit exceeded'), 'transient:rate-limit');
+  assert.equal(classifyFailureCategory('server returned 529'), 'transient:overload');
+  assert.equal(classifyFailureCategory('socket hang up, econnreset'), 'transient:connection');
+  assert.equal(classifyFailureCategory('the model output was empty'), 'unknown');
+});
+
 console.log(`\nall ${passed} smoke tests passed`);

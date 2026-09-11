@@ -30,6 +30,38 @@ export interface ClassifyFailure {
   readonly code?: string | null;
 }
 
+/**
+ * Classify a classifier failure `detail` into a stable category so the * user-facing "unavailable" text can distinguish CONFIGURATION problems
+ * (wrong route / unsupported reasoning effort — fixing the config or the
+ * metadata is the remedy, retrying is not) from TRANSIENT ones (429 / 5xx /
+ * timeout — retrying later is the remedy). v0.14.0: the previous free-text
+ * sniffing lumped e.g. `UNSUPPORTED_REASONING_EFFORT` (ollama metadata
+ * missing, retry-without-effort still cannot work) under "temporarily
+ * unavailable", misleading the model into pointless retries.
+ */
+export type ClassifyFailureCategory =
+  | 'config:no-route'
+  | 'config:unsupported-effort'
+  | 'transient:timeout'
+  | 'transient:rate-limit'
+  | 'transient:overload'
+  | 'transient:server'
+  | 'transient:connection'
+  | 'unknown';
+
+/** Map a classifier-failure detail string to its stable category. */
+export function classifyFailureCategory(detail: string): ClassifyFailureCategory {
+  const m = detail.toLowerCase();
+  if (/no classifier route/.test(m)) return 'config:no-route';
+  if (/unsupported[\s-]*reasoning[\s-]*effort|reasoning effort/.test(m)) return 'config:unsupported-effort';
+  if (/timed?\s*out|timeout|stalled/.test(m)) return 'transient:timeout';
+  if (/rate.?limit|429/.test(m)) return 'transient:rate-limit';
+  if (/overload|529/.test(m)) return 'transient:overload';
+  if (/server error|\b5\d\d\b/.test(m)) return 'transient:server';
+  if (/connect|network|socket|fetch failed|econn/.test(m)) return 'transient:connection';
+  return 'unknown';
+}
+
 /** Per-attempt classifier failure info delivered to the durable audit log. */
 export interface ClassifyAttemptFailInfo {
   readonly stage: 'fast-filter' | 'review';

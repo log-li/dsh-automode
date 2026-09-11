@@ -20,7 +20,7 @@ import { compileRegex, classifyBand, bashCommandOf, matchRule, compileGlob, matc
 import { VerdictCache, hashString } from './cache.js';
 import { Breaker } from './breaker.js';
 import { AllowPathBridge } from './bridge.js';
-import { classifyTwoStage, renderUserIntent, resolveRoute, type Verdict } from './classifier.js';
+import { classifyFailureCategory, classifyTwoStage, renderUserIntent, resolveRoute, type Verdict } from './classifier.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from './prompt.js';
 import { expandDefaults } from './config.js';
 import { permissionSnapshot } from './permission-state.js';
@@ -139,14 +139,17 @@ export const BREAKER_TRIPPED_HINT =
 
 /** CC errors-doc wording for transient classifier failures. */
 function classifierUnavailableText(detail: string, toolName: string): string {
-  const m = detail.toLowerCase();
-  let cat = '';
-  if (/timed?\s*out|timeout|stalled/.test(m)) cat = ' (timed out)';
-  else if (/rate.?limit|429/.test(m)) cat = ' (rate-limited)';
-  else if (/overload|529/.test(m)) cat = ' (overloaded)';
-  else if (/server error|\b5\d\d\b/.test(m)) cat = ' (server error)';
-  else if (/connect|network|socket|fetch failed|econn/.test(m)) cat = ' (connection failed)';
-  return `dsh-automode: the safety classifier is temporarily unavailable${cat}, so auto mode cannot determine the safety of ${toolName} right now. Wait a moment and then try this action again. (detail: ${detail})`;
+  switch (classifyFailureCategory(detail)) {
+    case 'config:no-route':
+      return `dsh-automode: no classifier route is configured, so auto mode cannot determine the safety of ${toolName} right now. Set classifier.provider/model (or switch to a supported route) to restore automatic decisions. (detail: ${detail})`;
+    case 'config:unsupported-effort':
+      return `dsh-automode: the safety classifier route rejects the configured reasoning effort (UNSUPPORTED_REASONING_EFFORT), so auto mode cannot determine the safety of ${toolName}. Check classifier.provider/model (or the model's metadata) or switch to a route that supports the configured effort — retrying will not help. (detail: ${detail})`;
+    default: {
+      const cat = classifyFailureCategory(detail);
+      const m = cat.replace(/^transient:/, '');
+      return `dsh-automode: the safety classifier is temporarily unavailable${cat === 'unknown' ? '' : ` (${m})`}, so auto mode cannot determine the safety of ${toolName} right now. Wait a moment and then try this action again. (detail: ${detail})`;
+    }
+  }
 }
 
 export interface PreExecuteResult {
@@ -210,7 +213,11 @@ export function registerPreExecute(
             event: 'pre-execute-deny',
             tool: toolName,
             sessionId: sid,
-            detail: `matched deny pattern /${denyHit}/`,
+            // v0.14.0: carry the command/target context so a deny hit can be
+            // audited for false positives (previously only the pattern was
+            // recorded — e.g. `credentials` hits could not be distinguished
+            // from a harmless mention).
+            detail: `matched deny pattern /${denyHit}/${isFileTool(toolName) ? ` targets=${JSON.stringify(collectDenyPaths(exec.arguments))}` : commandText ? ` cmd=${JSON.stringify(commandText.slice(0, 150))}` : ''}`,
           });
           return {
             kind: 'deny',
@@ -236,7 +243,7 @@ export function registerPreExecute(
           event: 'pre-execute-deny',
           tool: toolName,
           sessionId: sid,
-          detail: `matched deny pattern /${denyHit}/`,
+          detail: `matched deny pattern /${denyHit}/${isFileTool(toolName) ? ` targets=${JSON.stringify(collectDenyPaths(exec.arguments))}` : commandText ? ` cmd=${JSON.stringify(commandText.slice(0, 150))}` : ''}`,
         });
         return {
           kind: 'deny',
@@ -309,11 +316,18 @@ export function registerPreExecute(
         // Covers file tools (targetPaths) AND bash write-commands (bashTargets destination).
         const allowPathTargets = isFileToolCall ? targetPaths : bashTargets;
         if (allowPathTargets.length > 0 && allowPathTargets.every((p) => isInsideTrusted(p, roots, wsBase))) {
+          // v0.14.0: the trust roots include the session cwd (`trustRoots`),
+          // so an in-workspace target with an escalation request also lands
+          // here — distinguish the two in the audit trail instead of labeling
+          // every hit "curated allowPath" (which reads as a config.allowPaths
+          // match). Behavior is identical: deterministic allow + bridge.
+          const configuredRoots = trustRoots(config.allowPaths);
+          const hitConfigured = allowPathTargets.every((p) => isInsideTrusted(p, configuredRoots, wsBase));
           appendDecision({
             event: 'pre-execute-allow',
             tool: toolName,
             sessionId: sid,
-            detail: `curated allowPath: ${allowPathTargets.join(', ')}`,
+            detail: `${hitConfigured ? 'curated allowPath' : 'workspace in-tree escalation (session cwd in trust roots)'}: ${allowPathTargets.join(', ')}`,
           });
           // Approval bridge (2026-08-31): the approval/request payload does not
           // carry args/paths, so the approval answerer cannot re-run this exact

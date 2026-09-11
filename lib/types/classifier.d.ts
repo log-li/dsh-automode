@@ -26,6 +26,18 @@ export interface ClassifyFailure {
     /** Adapter error code when present (e.g. UNSUPPORTED_REASONING_EFFORT). */
     readonly code?: string | null;
 }
+/**
+ * Classify a classifier failure `detail` into a stable category so the * user-facing "unavailable" text can distinguish CONFIGURATION problems
+ * (wrong route / unsupported reasoning effort — fixing the config or the
+ * metadata is the remedy, retrying is not) from TRANSIENT ones (429 / 5xx /
+ * timeout — retrying later is the remedy). v0.14.0: the previous free-text
+ * sniffing lumped e.g. `UNSUPPORTED_REASONING_EFFORT` (ollama metadata
+ * missing, retry-without-effort still cannot work) under "temporarily
+ * unavailable", misleading the model into pointless retries.
+ */
+export type ClassifyFailureCategory = 'config:no-route' | 'config:unsupported-effort' | 'transient:timeout' | 'transient:rate-limit' | 'transient:overload' | 'transient:server' | 'transient:connection' | 'unknown';
+/** Map a classifier-failure detail string to its stable category. */
+export declare function classifyFailureCategory(detail: string): ClassifyFailureCategory;
 /** Per-attempt classifier failure info delivered to the durable audit log. */
 export interface ClassifyAttemptFailInfo {
     readonly stage: 'fast-filter' | 'review';

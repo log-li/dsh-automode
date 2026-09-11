@@ -139,7 +139,7 @@ Configuration goes in your profile's `cordis.patch.yml`. Everything has defaults
 
 ### Trusting extra directories (`allowPaths`)
 
-`allowPaths` is a curated **full-trust** list: file ops and bash write-commands whose target resolves inside one of these directories skip the safety classifier entirely (logged as `pre-execute-allow` / `curated allowPath`). The shipped default keeps only the universal `/tmp/` — **personal directories are configured per profile** in your profile's `cordis.patch.yml`. Loader patches replace the targeted row's whole `config`, so the minimal override below sets only `allowPaths` (every other field falls back to the plugin's code defaults):
+`allowPaths` is a curated **full-trust** list: file ops and bash write-commands whose target resolves inside one of these directories skip the safety classifier entirely (logged as `pre-execute-allow` / `curated allowPath`; an in-workspace target with an escalation request is separately logged as `workspace in-tree escalation`, v0.14.0). The shipped default keeps only the universal `/tmp/` — **personal directories are configured per profile** in your profile's `cordis.patch.yml`. Loader patches replace the targeted row's whole `config`, so the minimal override below sets only `allowPaths` (every other field falls back to the plugin's code defaults):
 
 ```yaml
 # ~/.dsh/profiles/<profile>/cordis.patch.yml
@@ -154,7 +154,7 @@ Only recognized write-commands are trusted, and paths are matched after symlink 
 
 **Composite write-commands (v0.11.0).** A temp→swap export dance like `DIR=…; cp a b_tmp && (trash b; true) && mv b_tmp "$DIR/b"` is now parsed segment-by-segment (with `VAR=…` assignment tracking and `$VAR` expansion), so its destinations still hit `allowPaths`. `cd <dir>` is a tracked benign navigator — it updates the effective working directory (so a later `git add/commit/push` resolves its repo root from it) without invalidating the fast path (`cd -` stays unpredictable and falls back). The fast path stays guarded: a composite containing a side-effect command (`kill`, `pkill`, `rm`, `sh`, `bash`, network/daemon management, …), a command substitution (`` `…` `` or `$(…)`), a file redirection (`>file`, `>>file`, `2>file`), or any command outside the recognized write/benign set falls back to the classifier exactly as before. A descriptor-dup redirect (`2>&1`, `>&2`, `>&-`) is **not** a file write and does not invalidate the fast path — so `git push … 2>&1 | tail` is still allowlist-checked. Benign utilities inside a composite (`mkdir`, `echo`, …) ride along with the allowlisted write — their side effects are not re-reviewed once every write target is allowlisted. `rm` still forces a classifier fallback, and — since v0.13.0, when `trash` appears in a composite its recoverable-delete targets join the destination set and are allowlist-checked like any write destination (all of them must be inside the trusted roots, else the whole composite falls back). History-rewriting git commands (`reset --hard`, `clean`, `rebase`, `merge`) are deliberately *not* allowlist-trusted.
 
-**Zero-confirmation escalations (v0.10.0).** An allowlisted path means *full trust*, so a call that asks to widen the sandbox (`sandbox_permissions: danger-full-access`) into an allowlisted path is now **auto-allowed with no confirmation and no classifier** — the pre-execute gate already proves every target sits inside an `allowPath`, and that verdict is carried to the approval answerer by the call's `callId` (the audit trail shows `curated allowPath` → `approval-bridge` → `decision allowed-once`). Deny patterns still run first (a deny-listed path such as `~/.ssh/` is hard-rejected even inside an allowPath), and the circuit breaker is never bypassed — while tripped, allowlisted calls still go to a human.
+**Zero-confirmation escalations (v0.10.0).** An allowlisted path means *full trust*, so a call that asks to widen the sandbox (`sandbox_permissions: danger-full-access`) into an allowlisted path is now **auto-allowed with no confirmation and no classifier** — the pre-execute gate already proves every target sits inside an `allowPath`, and that verdict is carried to the approval answerer by the call's `callId` (the audit trail shows `curated allowPath` → `approval-bridge` → `decision allowed-once`; an in-workspace escalation shows `workspace in-tree escalation` instead, v0.14.0). Deny patterns still run first (a deny-listed path such as `~/.ssh/` is hard-rejected even inside an allowPath), and the circuit breaker is never bypassed — while tripped, allowlisted calls still go to a human.
 
 **Not a file-sandbox exemption.** `allowPaths` only skips *this plugin's* review — DSH's file sandbox (the session's file policy) is a separate layer and still applies. A write to an allowlisted directory **outside the workspace** is blocked by the sandbox unless the call asks for `sandbox_permissions: danger-full-access`; for an allowlisted path that escalation is auto-granted by the approval bridge (no review), so request the escalation on the first attempt.
 
@@ -209,7 +209,7 @@ Routine categories (installs, builds, tests, file edits, git add/commit/status) 
 
 When an action is denied, the denial echoes the **reviewer's reason AND the model's own stated justification** (from the tool call), so the model can see exactly what was rejected and reshape it. It is told to try a safer alternative; if **no safer alternative exists**, it is instructed to **stop retrying and ask the user for explicit permission** — a denied action will keep failing, and only explicit user approval lets a later attempt pass (the classifier weighs the user's recent explicit intent via `<recent_user_intent>`).
 
-Every classifier stream failure (thrown error **or** an `error` finish chunk) is logged to the DSH log with the resolved route, effort, error code/message, and raw output, and written to `decisions.jsonl` as a `classifier-fail` event — so a recurring `classifier returned no verdict` is diagnosable from the audit log itself. If a route rejects the configured `reasoningEffort` (e.g. `low` on a route that only supports `off`), the call is retried without an effort before failing.
+Every classifier stream failure (thrown error **or** an `error` finish chunk) is logged to the DSH log with the resolved route, effort, error code/message, and raw output, and written to `decisions.jsonl` as a `classifier-fail` event — so a recurring `classifier returned no verdict` is diagnosable from the audit log itself. If a route rejects the configured `reasoningEffort` (e.g. `low` on a route that only supports `off`), the call is retried without an effort before failing. The denial the model sees now distinguishes **configuration** problems (no route configured, or the route rejects the configured effort — v0.14.0: fix `classifier.provider/model` or the model's metadata, retrying will not help) from **transient** ones (429 / 5xx / timeout — retry later).
 
 ### Verdict cache
 
@@ -224,13 +224,15 @@ All decisions are logged to `~/.dsh/auto-mode/decisions.jsonl` (JSONL format, ap
 - `outcome` — allowed-once / rejected / cancelled
 - `tool` — tool name
 - `tier` — deny / allow / classify:monitor / classify:cache / classify:fail / ...
-- `detail` — human-readable reason
+- `callId` — the exact tool call being decided (approval-path `decision` events, v0.14.0) — join it to the pre-execute record for a precise two-phase audit
+- `detail` — human-readable reason (deny hits now carry the command/target context, v0.14.0)
 - `sessionId` — session identifier
 
-Use the review script to analyze the log and identify rule optimization opportunities:
+Use the audit script to analyze the log, spot the allow→reject contradiction-pair regression signature, and identify rule optimization opportunities (v0.14.0):
 
 ```bash
-node scripts/auto-mode-review.mjs
+node scripts/audit.mjs                 # report + contradiction-pair sentinel
+node scripts/audit.mjs --fail-on-pairs # exit 1 when contradiction pairs exist (CI/cron alert)
 ```
 
 ## System prompt shadowing
