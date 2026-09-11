@@ -187,7 +187,7 @@ src/
 1. **打 tag 前：CHANGELOG（双语单文件）该版本条目先把 `— unreleased` 改为发布日期**（发布即定稿，避免 tarball/Release notes 残留 unreleased；已发布包的快照不可改）。版本号就绪 + CHANGELOG 更新后：`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`（push tag 即触发 `.github/workflows/release.yml`；或 `workflow_dispatch` 手动跑当前 package.json 版本）。
 2. Actions 门禁：build + smoke 80 项 + bridge-flow 全过后 → `npm publish`（token = repo secret `NPM_TOKEN`；2027 npm 方向：改 Trusted Publishing/OIDC + `npm publish --provenance`）→ 自动创建 GitHub Release（changelog 从 CHANGELOG.md 抽取）。
 3. 前置一次性配置：GitHub repo secret `NPM_TOKEN`（npmjs 生成 Automation token），或在 npmjs Trusted Publishers 配 OIDC。
-4. 发布前仍按全局规则：独立模型家族 review 通过才 push tag。
+4. 发布前按全局规则完成 code review 后 push tag（流程见全局规则，措辞不落本公开文档）。
 
 ## 变更历史
 
