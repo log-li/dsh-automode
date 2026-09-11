@@ -151,7 +151,7 @@ src/
 
 ## 已知问题 / 待办
 
-- **分类器路由解析**：`resolveRoute` 优先级为 `config.classifier → session request header → agent.options`；`classifier.provider/model` 为空时，分类器跟随会话**实际模型**（当前为 DeepSeek），而不是 agent 默认模型。若会话模型本身重/不稳定（reasoning 高开销）导致频繁 `classifier returned no verdict`，建议**固定专用分类器路由**（`classifier.provider/model` 指向支持 `reasoningEffort: off/low` 的轻量非 reasoning 模型，如 `ocg-completions/ox-alpha-free` 或 `ocg/deepseek-v4-flash-vision-exp`）。
+- **分类器路由解析**：`resolveRoute` 优先级为 `config.classifier → session request header → agent.options`；`classifier.provider/model` 为空时，分类器跟随会话**实际模型**（当前为 DeepSeek），而不是 agent 默认模型。若会话模型本身重/不稳定（reasoning 高开销）导致频繁 `classifier returned no verdict`，建议**固定专用分类器路由**（`classifier.provider/model` 指向支持 `reasoningEffort: off/low` 的轻量非 reasoning 模型）。
 
 - **裁决缓存签名两侧不一致 → 审批路径二次分类，且第二次看不到命令原文**（2026-09-11 实测复现，影响 v0.12.0；**v0.13.0 已修复**，见变更历史）
   - **症状**：同一动作在 pre-execute 门被判 allow（`decisions.jsonl` 写 `pre-execute-allow`），约 2 秒后 approval 路径却写 `decision outcome:rejected`，命令最终未执行。日志呈现「先放行、后否决」的矛盾对。
@@ -193,7 +193,7 @@ src/
 
 ### v0.14.4（2026-09-12，已完成）
 
-- **修复 glm-5.3-flash 独立 review 检出的两项不对称问题**（逐条核验采纳，2026-09-12）。
+- **修复独立模型家族 review 检出的两项不对称问题**（逐条核验采纳，2026-09-12）。
   - **严重1：approval 路径 deny 扫描面 ≠ gate**。v0.13.0 恢复真实 args 后，`classifyBand`（`bands.ts`）以 `JSON.stringify(args)` 全量入 haystack——文件**内容**（content/new_string）进入 deny 扫描；而 gate 自 v0.11.1 起对文件工具**只扫目标路径**（`collectDenyPaths`，避免「文档提到敏感文件名算泄漏」的误伤）。后果：白名单内写入正文含敏感词 → approval 误拒 → allowPath 零评审契约被打破 + 制造「先 allow 后 reject」矛盾对（哨兵误报源）+ 两道防线 deny 语义分叉。
     - **改法**：把「文件工具=扫路径、bash=扫命令文本」的 haystack 构造抽为共享 `denyHaystackFor`（`bands.ts`，`isFileTool`/`collectPaths`/`collectDenyPaths` 从 pre-execute 移入 bands 一起内聚），gate 与 `decideAuto` 的 `classifyBand` 复用同一构造——两线一致、内容不进 deny。属**收紧**（消误拒），路径级硬拒保留。
   - **严重2：文件工具提权时分类器看不到目标路径**。`PromptInput` 无 `paths`；提权分支 `escReason` 仅含 justification；文件工具无 `command` → 分类器只见「提权+理由」，不知写哪个文件 → `write /etc/foo`+提权+无辜理由可盲 allow 并被缓存固化。v0.14.1 修了缓存 key（目录入 key）但没修分类器输入——key 与输入不对称。
@@ -206,7 +206,7 @@ src/
   - **轻10**：`classifyFailureCategory` 的 `reasoning effort` 裸子串过宽 → 收紧为完整短语匹配。
   - **轻11**：README audit 段补 `--limit` 用法示例。
   - 落地：80 项 smoke 全过（新增 6：denyHaystackFor 一致性 ×1、paths 渲染 ×1、dirs 碰撞 ×1、file-tool sig 奇偶性 ×1、effort 子串收紧 ×2）；README(en/zh) `--limit` 示例；测试声明补正；版本收敛 0.14.4（0.14.2/0.14.3 未单独发布）。
-  - **re-review（glm-5.3-flash，push 前门禁）落地**：① 采纳【严重】遗留——gate 提权分支 `promptInputOf` 补 `command`（v0.13.0 只修了 approval 侧，gate 侧 bash 提权分类器仍只见 justification）；② 采纳【中】——`toolArgsKey` dirs 改 `hashString(JSON…)`（防 `maxArgsChars` 截断把超长 reason 后的 dirs 截出 key、复活跨目录共享）；③ **拒绝【中】**核验无净变化——非文件分支 `commandText||argsText` fallback 与旧版 deny band 行为等价（旧版已扫 args），只读点前移不改最终 deny 结果，不做无依据改动。最终 80 项 smoke 全过，push。
+  - **re-review（独立模型家族，push 前门禁）落地**：① 采纳【严重】遗留——gate 提权分支 `promptInputOf` 补 `command`（v0.13.0 只修了 approval 侧，gate 侧 bash 提权分类器仍只见 justification）；② 采纳【中】——`toolArgsKey` dirs 改 `hashString(JSON…)`（防 `maxArgsChars` 截断把超长 reason 后的 dirs 截出 key、复活跨目录共享）；③ **拒绝【中】**核验无净变化——非文件分支 `commandText||argsText` fallback 与旧版 deny band 行为等价（旧版已扫 args），只读点前移不改最终 deny 结果，不做无依据改动。最终 80 项 smoke 全过，push。
   - **轻8 拒绝**（记录理由）：deny regex 每次 approval 重编译优化收益微乎其微，改预编译需扩 decideAuto 参数——性价比低，不做。
   - **轻12 登记**（范围外，本期不修）：gate 不执行 deletionGuard、bridge 裸 callId 非会话隔离、`ls*` glob 宽匹配、allowPath 内 `git push --force` 跳过分类器——记入已知问题待后续评估。
 
