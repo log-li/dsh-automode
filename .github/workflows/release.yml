@@ -53,4 +53,9 @@ jobs:
           m = re.search(rf'## \[{re.escape(ver)}\].*?(?=\n## \[|\Z)', s, re.S)
           print(m.group(0).strip() if m else f'Release {sys.argv[1]} (see CHANGELOG.md)')
           PY
-          gh release create "$VER" --title "Release $VER" --notes-file /tmp/release-notes.md
+          if gh release view "$VER" >/dev/null 2>&1; then
+            gh release edit "$VER" --title "Release $VER" --notes-file /tmp/release-notes.md
+            echo "release existed — notes updated"
+          else
+            gh release create "$VER" --title "Release $VER" --notes-file /tmp/release-notes.md
+          fi
