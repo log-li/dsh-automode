@@ -183,6 +183,15 @@ src/
 
 ## 变更历史
 
+### v0.14.1（2026-09-12，进行中）
+
+- **修复：文件工具缓存签名不含目标路径 → 同 justification 跨目录共享裁决**（2026-09-12 实测复现，用户指出）。
+  - **症状**：write 探针 D 到 `~/Documents`（justification「缓存区分度测试甲」）分类器新审后，9 秒后同 justification 写 E 到 `~/Downloads`（**不同目录**）→ `verdict cache ALLOW` **命中 D 的裁决**。日志：`08:30:23 分类器新审` → `08:30:32 verdict cache ALLOW`。
+  - **根因**：`VerdictCache.sig`（`cache.ts:36-51`）的命令主体 = `args.command || reason`；文件工具（write/edit）**没有 `command` 字段** → key 退化为 `toolName | justification文本 | 意图hash`——**路径（目录与文件名）完全不参与**。目录粒度都谈不上：同理由可跨目录任意共享（除 deny 频带先拦的部分）。
+  - **决策（用户拍板，2026-09-12）**：**按目标目录粒度入 key**（不是完整路径，也不是文件名）——同一目录下写多个文件（批量导出等）安全属性相同，共享一次裁决合理；**文件名敏感由 deny 频带兜底**（`collectDenyPaths` 对每个 `file_path` 每调用照跑，与缓存无关：`.env`、`.ssh/`、`credentials` 等仍硬拒）。
+  - **实现**：`VerdictCache.sig` 对无 `command` 的对象 args，提取 `file_path/path/dir/root` 字段（含数组），取各自 `dirname`，**排序去重**后拼入 key（`reason |dirs:…`）。有 `command`（bash）路径行为不变。两侧一致：pre-execute 与 approval 共用同一份 `args`（v0.13.0 恢复机制），sig 内统一提取。
+  - **边界**：目录用 `dirname` 字符串（不做 realpath——symlink/`..` 变体会多审一次，属安全侧）；deny 盲区内的敏感文件名由用户规则负责（职责划拨：LLM 不按文件名枚举安全规则）。
+
 ### v0.14.0（2026-09-11，已完成）
 
 - **审计复盘：矛盾对哨兵 + 决策统计（A）**。基于 2026-09-11 对 `decisions.jsonl`（4700 条，08-22→09-11）的复盘：17 条 `decision rejected` **全部**呈现「同 session 同 tool 的 `pre-execute-allow` 在 ≤60s 前出现」的矛盾对形态——即 v0.13.0 修复的 Bug 1/2 症状在 08-25 起系统性存在（17 对全部是用户明确要求的合法操作被二次分类否决）。新增 `scripts/audit.mjs` 复盘脚本：扫描 decisions.jsonl，输出事件分布 / 工具构成 / **矛盾对检测（>0 即告警，防回归）** / failClosed 拒因归类；独立工具，不改变运行时。
