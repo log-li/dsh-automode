@@ -273,6 +273,13 @@ could be read as permission` —— 那句在 prompt 里守的是另一组四类
     读取密钥的 subagent）。缓解：该 subagent **真正执行**时那一步是 bash 调用，命令原文仍被频带扫；
     文件写入仍扫目标路径。即防线从「散文」下移到「真实操作」，这是刻意取舍：
     散文误报的训练成本高于它拦下的重复覆盖。
+  - **实现补充（v0.15.1b，in-session 实测暴露）**：频带有**两个执行点** —— `classifyBand`，
+    以及 pre-execute 门里**自建**的扫描（`denyHaystackFor` + `matchRule`）。第一版修复只改了
+    `classifyBand`，门那条路仍用全量模式扫散文 → 重启后在真实会话中**误报复现**
+    （散文承载型工具提到密钥路径仍被硬拒）。现收敛为单一 `scanDenyBand()`
+    （haystack + 散文作用域 + 匹配一起收进同一函数），两处共用，并加**结构守卫测试**
+    （`pre-execute.ts` 不得再出现 `matchRule` / `denyHaystackFor`）。教训：
+    **「共用」必须连作用域一起共** —— v0.14.4 只共用了 haystack，作用域这次就从缺口漏了出来。
 
 - **prompt 契约测试是子串断言，锁不住语义**（2026-09-12 review，**v0.15.1 部分加固**）
   - 4 条 `sys.includes(...)` 测试只能证明「该句子还在」，不能证明：句子只出现一次（两处
