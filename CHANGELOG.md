@@ -7,6 +7,11 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ### Changed
 - (track upcoming changes here; moved into a dated version section at release time — Keep a Changelog)
 
+## [0.15.2] — 2026-09-12
+
+### Fixed
+- **Documentation brought back in line with the shipped behavior.** The 0.15.1 tarball carried a README and CHANGELOG that still described the superseded policy: the classifier section presented the gate as judging an action's riskiness and said dangerous escalations stayed refused, and this same CHANGELOG section still claimed the machine-leaving floor was unchanged. None of that has been true since the user-is-the-arbiter change. Both READMEs now state the current contract — authorization rather than worth, the hard floor, and the double-check loop through `ask_user_question` — and the retired sentence here is marked as retired. A smoke test now pins this class of drift: it fails if either README omits the current policy or carries the old wording, and if the CHANGELOG section for the version being shipped contains the retired floor sentence. **No behavior changed in this release.**
+
 ## [0.15.1] — 2026-09-12
 
 ### Fixed
@@ -89,6 +94,11 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [Unreleased]
 
 （发布前在此跟踪变更；发布时移入带日期的版本段——Keep a Changelog）
+
+## [0.15.2] — 2026-09-12
+
+### 修复
+- **文档与已发布行为对齐。** 0.15.1 的 npm 包里带的 README 与 CHANGELOG 仍在描述已被取代的政策：分类器一节把闸门写成在判断动作的风险高低、并称危险动作提权会被拒绝，而 0.15.1 段自己也仍写着「底线不变」。自「判定权归用户」之后，这些都不再成立。两份 README 已改写为当前契约 —— 授权而非价值、硬底线、经 `ask_user_question` 的 double-check 闭环；CHANGELOG 里那句被退役的表述也已标注。新增 smoke 测试固定这一类漂移：任一 README 缺少当前政策或含旧措辞、或当前版本段仍含被退役的底线句，测试即失败。**本版本未改任何行为。**
 
 ## [0.15.1] — 2026-09-12
 
