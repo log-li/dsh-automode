@@ -17,8 +17,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          registry-url: https://registry.npmjs.org
+          # 必须是 Node 24：**npm 可信发布（OIDC）要求 npm ≥ 11.5.1**，Node 22 自带
+          # npm 10.x → 根本不会尝试 OIDC，直接 ENEEDAUTH（2026-09-12 实测）。
+          node-version: '24'
+        # ⚠ **不要**设 `registry-url`：设了 setup-node 会写出含
+        # `_authToken=${NODE_AUTH_TOKEN}` 的 .npmrc 并导出占位 token，
+        # npm 优先用该 token 而非 OIDC → `E404 Not Found - PUT …`
+        # （provenance 却已签署成功，极具误导性）。见 npm/cli#8730。
 
       # Why no build/test here: dsh-automode peer-depends on host-private
       # @deepseek-ai packages (e.g. dsh-sandbox-policy 0.1.x exists only
@@ -34,11 +39,16 @@ jobs:
           test -f CHANGELOG.md || { echo "CHANGELOG.md missing"; exit 1; }
 
       - name: Publish to npm (trusted publishing / OIDC; provenance signs the tarball)
-        run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        # OIDC: trusts the npm Trusted Publisher configured for log-li/dsh-automode;
-        # NODE_AUTH_TOKEN is kept as a fallback when token-based publishing is used.
+        # ⚠ 这里**不能**设 `NODE_AUTH_TOKEN`（哪怕是 `${{ secrets.NPM_TOKEN }}`）：
+        # 该 secret 不存在时它是**空字符串**，npm 见到变量存在就改用 token 认证、
+        # **直接绕过 OIDC** → `ENEEDAUTH`。可信发布只靠 `id-token: write`。
+        #
+        # `--ignore-scripts` 跳过 `prepublishOnly`（= `npm run build` → `tsc`）：
+        # 本仓 CI 刻意不装依赖（宿主私有 @deepseek-ai 包在公共 registry 上无法解析），
+        # 缺 `@types/node` 会让 tsc 报 TS2688（2026-09-12 实测失败原因）。
+        # 编译产物 lib/ 随 git 提交，由上方 “Verify release artifacts” 断言存在，
+        # 因此发布这一步**不需要**构建。
+        run: npm publish --provenance --ignore-scripts
 
       - name: Create GitHub Release with changelog
         env:
