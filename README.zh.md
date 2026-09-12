@@ -6,13 +6,7 @@
 
 > 🌐 **简体中文**: [README.zh.md](./README.zh.md) · **English**: [README.md](./README.md)
 
-[![npm](https://img.shields.io/npm/v/@log.li/dsh-automode)](https://www.npmjs.com/package/@log.li/dsh-automode)
-[![npm downloads](https://img.shields.io/npm/dm/@log.li/dsh-automode)](https://www.npmjs.com/package/@log.li/dsh-automode)
-[![license](https://img.shields.io/npm/l/@log.li/dsh-automode)](./LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/log-li/dsh-automode)](https://github.com/log-li/dsh-automode)
-[![GitHub last commit](https://img.shields.io/github/last-commit/log-li/dsh-automode)](https://github.com/log-li/dsh-automode)
-[![TypeScript](https://img.shields.io/github/languages/top/log-li/dsh-automode)](https://github.com/log-li/dsh-automode)
-[![DSH plugin](https://img.shields.io/badge/DSH%20plugin-ecosystem-2ea043)](https://github.com/topics/dsh-plugin)
+[![npm](https://img.shields.io/npm/v/@log.li/dsh-automode)](https://www.npmjs.com/package/@log.li/dsh-automode) [![npm downloads](https://img.shields.io/npm/dm/@log.li/dsh-automode)](https://www.npmjs.com/package/@log.li/dsh-automode) [![license](https://img.shields.io/npm/l/@log.li/dsh-automode)](./LICENSE) [![GitHub stars](https://img.shields.io/github/stars/log-li/dsh-automode)](https://github.com/log-li/dsh-automode) [![GitHub last commit](https://img.shields.io/github/last-commit/log-li/dsh-automode)](https://github.com/log-li/dsh-automode) [![TypeScript](https://img.shields.io/github/languages/top/log-li/dsh-automode)](https://github.com/log-li/dsh-automode) [![DSH plugin](https://img.shields.io/badge/DSH%20plugin-ecosystem-2ea043)](https://github.com/topics/dsh-plugin)
 
 <img src="docs/auto-mode-icon.png" width="400" alt="dsh-automode" />
 
@@ -58,6 +52,29 @@ dsh plugin add ./path/to/dsh-automode
 ```
 
 安装后重启 `dsh web`。权限选择器（聊天框左下角）会显示 **Auto mode**，与只读 / workspace-write / danger-full-access 并列。
+
+### 可选：权限选择器里的 ⚡ 图标
+
+`auto-mode` 预设声明了一个 `icon`，但**原生 DSH 把三个内置 glyph 写死在客户端里，会静默忽略预设的 `icon`** —— 所以只有额外打上随包提供的补丁，闪电才会显示：
+
+```bash
+# <profile> 是你的 DSH profile 名（通常是 web）。用哪个 profile 下的副本都行：
+# 脚本自己会扫描所有 profile 与全局安装。
+node ~/.dsh/profiles/<profile>/node_modules/@log.li/dsh-automode/patches/dsh-permission-preset-icon.mjs
+
+# 或者从 checkout 里跑：
+node patches/dsh-permission-preset-icon.mjs --dry-run   # 先看它会改什么
+node patches/dsh-permission-preset-icon.mjs
+```
+
+然后重启 `dsh web`。
+
+**先弄清你在接受什么。** 这个补丁改的是 **`node_modules` 里的文件**（宿主预设 schema 与客户端 bundle），所以它以独立脚本形式提供、而不在安装时自动执行：
+
+- **它只是外观。** 闪电渲染与否，`auto-mode` 行为完全一致。不在意就别跑。
+- **每次 `npm update @deepseek-ai/dsh` 或重装插件都会把它冲掉** —— 之后重跑一次即可。它不会「打一半」：锚点对不上的文件会被明确报告并**保持原样**。
+- 它针对 DSH 0.1.5 这一代。将来 DSH 若原生支持预设 `icon`，删掉脚本即可。
+
 
 ## 命令
 
@@ -176,7 +193,7 @@ pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来�
         icon: '<你的-svg-path-d>'   # 默认 bolt：'M9.15 3.4L5.85 8.55H7.95L7.05 12.6L10.45 7.25H8.25L9.15 3.4Z'
 ```
 
-图标只是**外观**——无论是否渲染，行为完全一致。它只在支持读取预设 `icon` 的 DSH 上显示（原生 DSH 会忽略；本机 `dsh-permission-preset-icon.mjs` 补丁开启）。不设 `icon` 即用默认 bolt。
+图标只是**外观**——无论是否渲染，行为完全一致。它只在支持读取预设 `icon` 的 DSH 上显示（原生 DSH 会忽略；随包提供的 [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) 可开启 —— 见[安装](#可选权限选择器里的--图标)）。不设 `icon` 即用默认 bolt。
 
 ### 两阶段分类器
 

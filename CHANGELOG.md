@@ -7,6 +7,13 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ### Changed
 - (track upcoming changes here; moved into a dated version section at release time — Keep a Changelog)
 
+## [0.15.0] — 2026-09-12
+
+### Added
+- **The preset-icon patch now ships with the package** (`patches/dsh-permission-preset-icon.mjs`, plus `npm run patch:icon`). Stock DSH hardcodes the three built-in permission glyphs and silently ignores a preset's `icon`, so the bolt could previously only render on a machine that had patched DSH by hand — with the script living outside any repo, nobody else could reproduce it. The READMEs now document the command, what it edits, and that a DSH upgrade or plugin reinstall wipes it.
+- The script **discovers** its targets instead of hardcoding them: it scans every `~/.dsh/profiles/*/node_modules` (any profile name) plus the global install root (`npm root -g`, `~/.npm-global`, the two system prefixes), and patches each copy it finds. The previous version only ever worked on one profile named `web` with a `~/.npm-global` layout.
+- `--dry-run` reports what would change without writing; `--profile <name>` limits the scan. An anchor that no longer matches is reported and **that file is left untouched** rather than half-patched.
+
 ## [0.14.4] — 2026-09-12
 
 ### Fixed
@@ -65,6 +72,13 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [Unreleased]
 
 （发布前在此跟踪变更；发布时移入带日期的版本段——Keep a Changelog）
+
+## [0.15.0] — 2026-09-12
+
+### 新增
+- **预设图标补丁随包发布**（`patches/dsh-permission-preset-icon.mjs`，并加了 `npm run patch:icon`）。原生 DSH 把三个内置权限 glyph 写死在客户端、静默忽略预设的 `icon`，所以闪电此前只在一台手工打过 DSH 补丁的机器上能显示 —— 而那个脚本不在任何仓库里，别人根本无法复现。两份 README 现在写明了命令、它改什么、以及 DSH 升级或重装插件会冲掉它。
+- 脚本改为**自动发现**目标而非写死路径：扫描每个 `~/.dsh/profiles/*/node_modules`（profile 名任意）以及全局安装根（`npm root -g`、`~/.npm-global`、两个系统前缀），逐个副本打补丁。旧版只在一个名为 `web` 的 profile、且 DSH 装在 `~/.npm-global` 的布局下才有效。
+- `--dry-run` 只报告不写入；`--profile <name>` 限定扫描范围。锚点对不上的文件会被报告并**保持原样**，不会打一半。
 
 ## [0.14.4] — 2026-09-12
 

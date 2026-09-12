@@ -6,13 +6,7 @@
 
 > 🌐 **简体中文**: [README.zh.md](./README.zh.md) · **English**: [README.md](./README.md)
 
-[![npm](https://img.shields.io/npm/v/@log.li/dsh-automode)](https://www.npmjs.com/package/@log.li/dsh-automode)
-[![npm downloads](https://img.shields.io/npm/dm/@log.li/dsh-automode)](https://www.npmjs.com/package/@log.li/dsh-automode)
-[![license](https://img.shields.io/npm/l/@log.li/dsh-automode)](./LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/log-li/dsh-automode)](https://github.com/log-li/dsh-automode)
-[![GitHub last commit](https://img.shields.io/github/last-commit/log-li/dsh-automode)](https://github.com/log-li/dsh-automode)
-[![TypeScript](https://img.shields.io/github/languages/top/log-li/dsh-automode)](https://github.com/log-li/dsh-automode)
-[![DSH plugin](https://img.shields.io/badge/DSH%20plugin-ecosystem-2ea043)](https://github.com/topics/dsh-plugin)
+[![npm](https://img.shields.io/npm/v/@log.li/dsh-automode)](https://www.npmjs.com/package/@log.li/dsh-automode) [![npm downloads](https://img.shields.io/npm/dm/@log.li/dsh-automode)](https://www.npmjs.com/package/@log.li/dsh-automode) [![license](https://img.shields.io/npm/l/@log.li/dsh-automode)](./LICENSE) [![GitHub stars](https://img.shields.io/github/stars/log-li/dsh-automode)](https://github.com/log-li/dsh-automode) [![GitHub last commit](https://img.shields.io/github/last-commit/log-li/dsh-automode)](https://github.com/log-li/dsh-automode) [![TypeScript](https://img.shields.io/github/languages/top/log-li/dsh-automode)](https://github.com/log-li/dsh-automode) [![DSH plugin](https://img.shields.io/badge/DSH%20plugin-ecosystem-2ea043)](https://github.com/topics/dsh-plugin)
 
 <img src="docs/auto-mode-icon.png" width="400" alt="dsh-automode in the permission picker" />
 
@@ -58,6 +52,29 @@ dsh plugin add ./path/to/dsh-automode
 ```
 
 Restart `dsh web` after installing. The permission picker (bottom-left of the chat box) will show **Auto mode** alongside read-only / workspace-write / danger-full-access.
+
+### Optional: the ⚡ glyph in the permission picker
+
+The `auto-mode` preset declares an `icon`, but **stock DSH hardcodes the three built-in glyphs and silently ignores a preset's `icon`** — so the bolt only appears if you also apply the shipped patch:
+
+```bash
+# <profile> is your DSH profile name (usually `web`). Any profile's copy works:
+# the script itself scans every profile plus the global install.
+node ~/.dsh/profiles/<profile>/node_modules/@log.li/dsh-automode/patches/dsh-permission-preset-icon.mjs
+
+# from a checkout instead:
+node patches/dsh-permission-preset-icon.mjs --dry-run   # see what it would do
+node patches/dsh-permission-preset-icon.mjs
+```
+
+Then restart `dsh web`.
+
+**Know what you are opting into.** The patch edits files **inside `node_modules`** (the host preset schema and the client bundle), which is why it ships as a separate script rather than running on install:
+
+- **It is cosmetic.** `auto-mode` behaves identically whether the bolt renders. Skip it if you do not care.
+- **Every `npm update @deepseek-ai/dsh` or plugin reinstall wipes it** — re-run the script afterwards. It never half-applies: an anchor that no longer matches is reported and that file is left untouched.
+- It targets the DSH 0.1.5 line. If a future DSH supports preset `icon`s natively, delete the script.
+
 
 ## Commands
 
@@ -176,7 +193,7 @@ The `auto-mode` preset ships a bolt glyph in the permission picker. Set your own
         icon: '<your-svg-path-d>'   # default bolt: 'M9.15 3.4L5.85 8.55H7.95L7.05 12.6L10.45 7.25H8.25L9.15 3.4Z'
 ```
 
-The icon is **cosmetic** — behavior is identical whether it renders. It shows only on DSH versions that read preset `icon`s (stock DSH ignores it; the local `dsh-permission-preset-icon.mjs` patch enables it). Leave `icon` unset for the default bolt.
+The icon is **cosmetic** — behavior is identical whether it renders. It shows only on DSH versions that read preset `icon`s (stock DSH ignores it; the patch shipped in [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) enables it — see [Install](#optional-the--glyph-in-the-permission-picker)). Leave `icon` unset for the default bolt.
 
 ### Two-stage classifier
 
