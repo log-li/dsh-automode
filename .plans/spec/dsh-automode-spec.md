@@ -335,14 +335,17 @@ src/
   新文件 / 改名助手 / 内联 `patterns.find(p => p.test(...))` 都能绕过。现改为遍历全部 `src/*.ts`
   **与 `lib/*.js`**（真正运行的产物）断言 `matchRule(`/`denyHaystackFor(` 只出现在 bands 内。
 
-- **授权来源的边界：无 `source.kind` 的消息仍被当作「用户直说」**（2026-09-12 review m7 检出，**未改**）
-  - `renderUserIntent` 的条件是 `srcKind === undefined || srcKind === 'user'` —— 缺少 `source` 的消息
-    也会进入意图窗口。在「用户意图是唯一授权来源」的新契约下这变得关键：若某类消息能被构造成
-    「无 source」，它就等于伪造授权。
-  - **为什么不改**：`undefined` 是**宿主兼容回退**（旧宿主可能不给 `source`）—— 直接收紧可能让真实
-    用户消息不再被识别为授权，等于把「用户是最终决断」这条原则打掉。列为**待核实**：确认本机 DSH
-    所有人类消息都带 `source.kind === 'user'` 之后，即可收紧为严格等值。
-  - 已知的工具型授权通道（`ask_user_question` 的答案）是严格的（按 `toolCallId` 反查工具名）。
+- **授权来源的边界：已核实并收窄一格**（2026-09-12 review m7 检出 → 同日实测后加固）
+  - 原条件 `srcKind === undefined || srcKind === 'user'` 会把「**有 `source` 对象但没有 `kind`**」
+    的消息也当成用户直说。在「用户意图是唯一授权来源」的契约下，这等于给「来源不明」的注入
+    留了一道签字门。
+  - **实测（本机真实会话日志，491 条 `user` 角色消息）**：`tool` 489、`user`（人类）、
+    `plugin`、`agent-instructions`、`agent-message`、`subagent-settled` —— **无一条缺标签**。
+    即所有非人类注入都带 `kind`，兜底分支在本机不可达。
+  - **加固**：只有「**完全没有 `source` 对象**」才走兼容回退（旧宿主可能不打标签；删掉它会让真实
+    用户消息在老宿主上完全无法授权）；「有 `source` 却没有 `kind`」**不再采信**。
+    有测试覆盖五种来源形态。
+  - 工具型授权通道（`ask_user_question` 的答案）本来就是严格的（按 `toolCallId` 反查工具名）。
 
 - **prompt 契约测试是子串断言，锁不住语义**（2026-09-12 review，**v0.15.1 部分加固**）
   - 4 条 `sys.includes(...)` 测试只能证明「该句子还在」，不能证明：句子只出现一次（两处

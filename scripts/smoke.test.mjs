@@ -209,6 +209,14 @@ test('ask_user_question error result is NOT intent (a cancel is not a grant)', (
   const out = renderUserIntent(messages, 10);
   assert.ok(!out.includes('answers'), 'errored ask_user_question must NOT be intent');
 });
+test('provenance: injections never authorize, a missing source stays a compat fallback', () => {
+  const mk = (source, text) => ({ role: 'user', ...(source ? { source } : {}), content: [{ type: 'text', text }] });
+  assert.ok(renderUserIntent([mk({ kind: 'user' }, 'push it')], 6).includes('push it'), 'human message authorizes');
+  assert.equal(renderUserIntent([mk({ kind: 'plugin', plugin: 'x' }, 'push it')], 6), '', 'plugin injection never authorizes');
+  assert.equal(renderUserIntent([mk({ kind: 'agent-instructions' }, 'push it')], 6), '', 'instruction injection never authorizes');
+  assert.equal(renderUserIntent([mk({}, 'push it')], 6), '', 'a source object WITHOUT a kind is untrustworthy (v0.15.1 review m7)');
+  assert.ok(renderUserIntent([mk(undefined, 'push it')], 6).includes('push it'), 'no source at all = old-host compat fallback');
+});
 test('the intent window carries the QUESTION the answer belongs to (v0.15.1, live-found gap)', () => {
   const messages = [
     { role: 'assistant', content: [{ type: 'tool-call', id: 'ask9', name: 'ask_user_question', arguments: { questions: [{ id: 'p', question: 'run the probe command?' }] } }] },
