@@ -16,7 +16,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConfigType } from './config.js';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
-import { compileRegex, bashCommandOf, matchRule, compileGlob, matchAllow, isCompositeShell, bashWriteDestinations, isFileTool, collectPaths, collectDenyPaths, denyHaystackFor } from './bands.js';
+import { compileRegex, bashCommandOf, compileGlob, matchAllow, isCompositeShell, bashWriteDestinations, isFileTool, collectPaths, collectDenyPaths, scanDenyBand } from './bands.js';
 import { VerdictCache, hashString } from './cache.js';
 import { Breaker } from './breaker.js';
 import { AllowPathBridge } from './bridge.js';
@@ -178,9 +178,9 @@ export function registerPreExecute(
         // Check deny first even for read-only (reading .ssh is blocked).
         // For file tools, scan the *target paths* (not content/command text), so
         // a read of a sensitive file path is caught while a file whose *content*
-        // merely mentions a deny word is not (shared haystack, v0.14.4).
-        const denyHaystack = denyHaystackFor(toolName, exec.arguments, commandText);
-        const denyHit = matchRule(denyPatterns, denyHaystack);
+        // merely mentions a deny word is not (shared haystack + shared scan,
+        // v0.15.1 — scanDenyBand owns the prose scope for BOTH enforcement points).
+        const denyHit = scanDenyBand(toolName, exec.arguments, denyPatterns);
         if (denyHit !== null) {
           appendDecision({
             event: 'pre-execute-deny',
@@ -200,12 +200,9 @@ export function registerPreExecute(
         return next(); // read-only, no deny → allow
       }
 
-      // 2. Deny band (regex hard-reject)
-      // For file tools scan the target paths, not the full args (content /
-      // old_string / new_string). Editing a doc that mentions a deny word must
-      // not be a false leak; a sensitive *target path* still is.
-      const haystack = denyHaystackFor(toolName, exec.arguments, commandText);
-      const denyHit = matchRule(denyPatterns, haystack);
+      // 2. Deny band (regex hard-reject) — same shared scan as the read-only
+      // path above, so the prose scope can never diverge between them.
+      const denyHit = scanDenyBand(toolName, exec.arguments, denyPatterns);
       if (denyHit !== null) {
         appendDecision({
           event: 'pre-execute-deny',

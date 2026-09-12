@@ -5,7 +5,7 @@
  *   node scripts/smoke.test.mjs
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, realpathSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findAllowRule, findDenyRule, isAllowlisted, patternMatches } from '../lib/rules.js';
@@ -15,7 +15,7 @@ import { isAuto, writeAutoMode } from '../lib/index.js';
 import { Breaker } from '../lib/breaker.js';
 import { VerdictCache, hashString } from '../lib/cache.js';
 import { AllowPathBridge } from '../lib/bridge.js';
-import { tokenizeShell, bashWriteDestinations, denyHaystackFor, isFileTool, collectPaths, classifyBand, compileRegex, compileGlob, proseSafeDenyPatterns, isProseCarrier, SUBJECT_ONLY_DENY_SOURCES } from '../lib/bands.js';
+import { tokenizeShell, bashWriteDestinations, denyHaystackFor, isFileTool, collectPaths, classifyBand, compileRegex, compileGlob, proseSafeDenyPatterns, isProseCarrier, SUBJECT_ONLY_DENY_SOURCES, scanDenyBand } from '../lib/bands.js';
 import { DEFAULT_DENY } from '../lib/config.js';
 import { isInsideTrusted } from '../lib/pre-execute.js';
 
@@ -602,6 +602,20 @@ test('prose scope actually drops path-shaped subject patterns (RegExp.source esc
   assert.equal(kept.some((s) => s.includes('.ssh')), false, '.ssh/ must not survive the prose filter');
   assert.equal(kept.some((s) => s.includes('.env')), false, '.env must not survive the prose filter');
   assert.ok(kept.some((s) => s.includes('BEGIN')), 'inline key-material stays in the prose scan');
+});
+console.log('v0.15.1b parity: the deny scan is shared, never hand-built per site');
+test('scanDenyBand applies the prose scope (both enforcement points call it)', () => {
+  // prose carrier: a mention is not an operation
+  assert.equal(scanDenyBand('todo_write', { todos: ['check the key file under the ssh dir'] }, denyRes), null);
+  // bash: the command text IS an operation, so the same subject still denies
+  assert.notEqual(scanDenyBand('bash', { command: 'ls -la ~/.ssh/' }, denyRes), null);
+});
+test('no enforcement point hand-builds a deny scan (structural guard)', () => {
+  const pre = readFileSync(new URL('../src/pre-execute.ts', import.meta.url), 'utf8');
+  assert.ok(!pre.includes('matchRule'), 'pre-execute must not call matchRule directly — use scanDenyBand');
+  assert.ok(!pre.includes('denyHaystackFor'), 'pre-execute must not assemble its own deny haystack');
+  const idx = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+  assert.ok(!idx.includes('matchRule('), 'index.ts must not call matchRule directly — use classifyBand/scanDenyBand');
 });
 test('prose-bearing calls are not denied for MENTIONING a sensitive subject', () => {
   const band = classifyBand(

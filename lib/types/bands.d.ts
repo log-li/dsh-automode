@@ -18,7 +18,7 @@ export declare function expandHome(p: string): string;
 /** Compile a rule string into a case-insensitive RegExp. */
 export declare function compileRegex(rule: string): RegExp;
 /** Whether `haystack` matches any regex in the list. Returns the first hit. */
-export declare function matchRule(rules: RegExp[], haystack: string): string | null;
+export declare function matchRule(rules: readonly RegExp[], haystack: string): string | null;
 /** Compile a prefix-glob into an anchored RegExp (leading/trailing * wildcards). */
 export declare function compileGlob(pattern: string): RegExp;
 /** Whether `text` matches any compiled glob. */
@@ -98,6 +98,17 @@ export declare function isProseCarrier(toolName: string, commandText: string): b
  * otherwise every path-shaped pattern silently stays in the prose scan.
  */
 export declare function proseSafeDenyPatterns(patterns: readonly RegExp[]): RegExp[];
+/**
+ * The ONE deny scan. Builds the haystack, applies the prose scope, and returns
+ * the first matching pattern (or null).
+ *
+ * Both enforcement points MUST call this instead of assembling the haystack and
+ * calling `matchRule` themselves: a hand-built scan at one site silently
+ * diverges from the other, which is exactly how the v0.14.4 parity bug and the
+ * v0.15.1 prose-scope miss happened (the gate scanned prose with the full
+ * pattern list while `classifyBand` filtered it).
+ */
+export declare function scanDenyBand(toolName: string, args: unknown, denyPatterns: readonly RegExp[]): string | null;
 /** Check whether an action matches a deny pattern, an allow pattern, or neither. */
 export declare function classifyBand(toolName: string, reason: string, args: unknown, denyPatterns: RegExp[], allowGlobs: RegExp[], readOnlyTools: readonly string[]): {
     action: 'allow' | 'deny' | 'classify';

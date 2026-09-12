@@ -28,7 +28,7 @@ export function compileRegex(rule: string): RegExp {
 }
 
 /** Whether `haystack` matches any regex in the list. Returns the first hit. */
-export function matchRule(rules: RegExp[], haystack: string): string | null {
+export function matchRule(rules: readonly RegExp[], haystack: string): string | null {
   for (const re of rules) {
     if (re.test(haystack)) return re.source;
   }
@@ -576,6 +576,29 @@ export function proseSafeDenyPatterns(patterns: readonly RegExp[]): RegExp[] {
   return patterns.filter((p) => !SUBJECT_ONLY_DENY_SOURCES.has(p.source.replace(/\\\//g, '/')));
 }
 
+/**
+ * The ONE deny scan. Builds the haystack, applies the prose scope, and returns
+ * the first matching pattern (or null).
+ *
+ * Both enforcement points MUST call this instead of assembling the haystack and
+ * calling `matchRule` themselves: a hand-built scan at one site silently
+ * diverges from the other, which is exactly how the v0.14.4 parity bug and the
+ * v0.15.1 prose-scope miss happened (the gate scanned prose with the full
+ * pattern list while `classifyBand` filtered it).
+ */
+export function scanDenyBand(
+  toolName: string,
+  args: unknown,
+  denyPatterns: readonly RegExp[],
+): string | null {
+  const commandText = bashCommandOf(args);
+  const haystack = denyHaystackFor(toolName, args, commandText);
+  const effective = isProseCarrier(toolName, commandText)
+    ? proseSafeDenyPatterns(denyPatterns)
+    : denyPatterns;
+  return matchRule(effective, haystack);
+}
+
 /** Check whether an action matches a deny pattern, an allow pattern, or neither. */
 export function classifyBand(
   toolName: string,
@@ -588,13 +611,10 @@ export function classifyBand(
   const commandText = bashCommandOf(args);
   const haystack = denyHaystackFor(toolName, args, commandText);
 
-  // 1. Deny band (regex hard-reject). On a prose-bearing call, subject-only
-  //    built-in patterns are skipped so that *mentioning* a sensitive thing is
-  //    not treated as *handling* it (v0.15.1 — see proseSafeDenyPatterns).
-  const denyPatternsForScan = isProseCarrier(toolName, commandText)
-    ? proseSafeDenyPatterns(denyPatterns)
-    : denyPatterns;
-  const denyHit = matchRule(denyPatternsForScan, haystack);
+  // 1. Deny band (regex hard-reject) — one shared scan; on a prose-bearing call
+  //    subject-only built-in patterns are skipped so that *mentioning* a
+  //    sensitive thing is not treated as *handling* it (v0.15.1).
+  const denyHit = scanDenyBand(toolName, args, denyPatterns);
   if (denyHit !== null) {
     return { action: 'deny', tier: 'deny', detail: `matched deny pattern /${denyHit}/` };
   }
