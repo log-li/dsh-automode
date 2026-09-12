@@ -160,10 +160,36 @@ export declare function fastFilter(ctx: Context, actionSummary: string, provider
     warn: (m: string) => void;
 }, onAttemptFail?: (info: ClassifyAttemptFailInfo) => void): Promise<boolean | null>;
 /**
+ * Parse the fast filter's one-digit reply.
+ *
+ * Exact `0`/`1` wins. A SHORT reply led by the digit ("0 (safe)") is tolerated.
+ * Everything else fails closed: the filter's input now carries the COMMAND TEXT
+ * (v0.15.1), so a chatty reply echoes the command (`v0.15.0`, `exit 0`) — an
+ * echoed digit must never be read as a verdict, and an echo with only zeros
+ * used to be accepted as "safe" (review M3).
+ */
+export declare function parseFastFilterDigit(reply: string): '0' | '1' | null;
+/**
  * Run one classifier call. Returns the verdict, or `null` when the call
  * failed, was aborted, was truncated, or produced an unparsable reply.
  */
 export declare function classify(ctx: Context, options: ClassifyOptions): Promise<Verdict | null>;
+/** Character budget for the prose-bearing args preview (v0.15.1). */
+export declare const ARGS_PREVIEW_CHARS = 600;
+/**
+ * A single, truncated preview of a tool call's arguments, for tools that carry
+ * NEITHER a command nor target paths (v0.15.1, review M2).
+ *
+ * Such a call — a dispatched subagent, a workflow script, any text-carrying tool
+ * — used to reach both classifier stages with the agent's justification and
+ * nothing else: the narration-only defect v0.15.1 fixed for bash and file tools
+ * was still live for every other tool, while the prose-scope change had just
+ * removed the deny band's only view of those payloads.
+ */
+export declare function argsPreviewOf(args: unknown): string | undefined;
+/** Whether a preview was cut short — a truncated payload hides its own tail, so
+ * callers force the structured review rather than let the filter decide it. */
+export declare function previewTruncated(preview: string | undefined): boolean;
 /**
  * Build the one-token fast filter's input (v0.15.1).
  *
@@ -176,7 +202,7 @@ export declare function classify(ctx: Context, options: ClassifyOptions): Promis
  * same `git tag … && git push` was allowed 5/5 with a confident justification
  * and rejected 5/5 with a hedged one.
  */
-export declare function actionSummaryOf(toolName: string, reason: string | undefined, command?: string, paths?: readonly string[]): string;
+export declare function actionSummaryOf(toolName: string, reason: string | undefined, command?: string, paths?: readonly string[], argsPreview?: string): string;
 /**
  * Two-stage classification (spec decision chain, and README "two-stage
  * classifier"): run the cheap one-token fast filter first; only flagged or
@@ -190,4 +216,4 @@ export declare function actionSummaryOf(toolName: string, reason: string | undef
  * This is what wires the previously-dead `fastFilter` (Bug 1) into both the
  * approval waterfall and the pre-execute escalation pre-screen.
  */
-export declare function classifyTwoStage(ctx: Context, options: ClassifyOptions, actionSummary: string): Promise<Verdict | null>;
+export declare function classifyTwoStage(ctx: Context, options: ClassifyOptions, actionSummary: string, forceReview?: boolean): Promise<Verdict | null>;

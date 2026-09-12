@@ -23,8 +23,30 @@ export declare function matchRule(rules: readonly RegExp[], haystack: string): s
 export declare function compileGlob(pattern: string): RegExp;
 /** Whether `text` matches any compiled glob. */
 export declare function matchAllow(globs: RegExp[], text: string): string | null;
-/** Extract the command field from tool arguments (string or object). */
-export declare function bashCommandOf(args: unknown): string;
+/**
+ * Command shapes whose effects can leave this machine.
+ *
+ * A match does NOT deny — it only forbids the one-token filter from deciding
+ * ALLOW on its own, so the structured review sees the action and checks the
+ * user's authorization (v0.15.1). Rationale: the decision now belongs to the
+ * USER, and the stage that cannot read the user's intent must not be the stage
+ * that decides. Measured before this rule: an outward message the user had
+ * asked for was allowed 5/5 by the fast filter, with the whole contract — and
+ * any authorization check — never read.
+ */
+export declare const MACHINE_LEAVING_SHAPES: readonly RegExp[];
+/** Whether an action's text can affect other people or systems. */
+export declare function looksMachineLeaving(text: string): boolean;
+/**
+ * Extract the command field from tool arguments (string or object).
+ *
+ * `toolName` is optional but matters: a shell-like tool may carry its command in
+ * `script`/`cmd` rather than `command`, and treating that call as "prose" would
+ * drop every subject-shaped deny pattern for something that IS an operation
+ * (v0.15.1, review M1). Non-shell tools are deliberately left alone so that a
+ * workflow script or document body is not scanned as a shell command.
+ */
+export declare function bashCommandOf(args: unknown, toolName?: string): string;
 /** Detect shell metacharacters that indicate a composite command.
  * Quote-aware: control characters inside quotes are literal — a quoted
  * filename like "GRF 2026 (copy).docx" is NOT a subshell — and only an

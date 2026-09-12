@@ -25,11 +25,13 @@ import * as sandboxPolicyModule from '@deepseek-ai/dsh-sandbox-policy';
 
 import { Config, type ConfigType, expandDefaults } from './config.js';
 import { permissionSnapshot } from './permission-state.js';
-import { classifyBand, compileRegex, compileGlob, bashCommandOf, isFileTool, collectPaths } from './bands.js';
+import { classifyBand, compileRegex, compileGlob, bashCommandOf, isFileTool, collectPaths, looksMachineLeaving } from './bands.js';
 import { findAllowRule, findDenyRule, isAllowlisted } from './rules.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from './prompt.js';
 import {
   actionSummaryOf,
+  argsPreviewOf,
+  previewTruncated,
   classifyFailureCategory,
   classifyTwoStage,
   renderTranscript,
@@ -317,14 +319,18 @@ async function decideAuto(
   // from old context (the amplifier behind the cache-miss double classification).
   // v0.14.4: file tools additionally pass their recovered target paths so the
   // approval classifier sees which file an escalated write targets.
-  const commandText = bashCommandOf(args);
+  const commandText = bashCommandOf(args, toolName);
+  const fileTool = isFileTool(toolName);
   const input = promptInputOf(
     {
       toolName,
       reason,
       userIntent,
       command: commandText || undefined,
-      paths: isFileTool(toolName) ? collectPaths(args) : undefined,
+      paths: fileTool ? collectPaths(args) : undefined,
+      // v0.15.1: prose-bearing tools (no command, not a file tool) otherwise give
+      // both classifier stages the agent's justification and nothing else.
+      argsPreview: !commandText && !fileTool ? argsPreviewOf(args) : undefined,
     },
     softAllowRules,
     softDenyRules,
@@ -358,10 +364,16 @@ async function decideAuto(
         });
       },
     },
-    // v0.15.1: the fast filter must see the ACTION (command text / target
-    // paths), not just the agent's justification — a reason-only summary let a
-    // confidently worded justification skip the review entirely.
-    actionSummaryOf(toolName, reason, commandText || undefined, input.paths),
+    // v0.15.1: the fast filter must see the ACTION — command text, target paths,
+    // or (v0.15.1) the args preview for prose-bearing tools — not just the
+    // agent's justification, which alone could skip the review entirely.
+    actionSummaryOf(toolName, reason, commandText || undefined, input.paths, input.argsPreview),
+    // A prose payload is precisely where an authorization check matters, and no
+    // shape list can read natural language — so any call judged from a preview is
+    // reviewed, never decided by the one-token filter (review M2).
+    looksMachineLeaving(commandText || input.argsPreview || '') ||
+      previewTruncated(input.argsPreview) ||
+      Boolean(input.argsPreview),
   );
 
   if (verdict) {

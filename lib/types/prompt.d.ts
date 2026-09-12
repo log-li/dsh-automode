@@ -22,6 +22,14 @@ export interface PromptInput {
      * targetPaths; approval: recovered args), keeping the verdict inputs aligned.
      */
     readonly paths?: readonly string[];
+    /**
+     * Truncated arguments preview for tools that carry NEITHER a command nor
+     * target paths (v0.15.1, review M2). Without it an escalated prose tool — a
+     * dispatched subagent, a workflow script — was judged on the justification
+     * ALONE, which is the narration-only defect v0.15.1 set out to remove, still
+     * live for every non-bash/non-file tool.
+     */
+    readonly argsPreview?: string;
 }
 /**
  * Build the system prompt: safety monitor role + operator rules + decision
@@ -39,4 +47,5 @@ export declare function promptInputOf(req: {
     userIntent?: string;
     command?: string;
     paths?: readonly string[];
+    argsPreview?: string;
 }, allowRules: readonly string[], denyRules: readonly string[], environmentFacts: readonly string[]): PromptInput;

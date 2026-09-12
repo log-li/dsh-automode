@@ -54,7 +54,14 @@ const TARGET_PATH_KEYS = ['file_path', 'path', 'dir', 'root'] as const;
  *   different directories never collide, even with identical justification
  *   text. `dirname` is applied without realpath — a symlink / `..` variant of
  *   the same directory simply re-classifies once (safe side).
- * - anything else → the reason text (legacy fallback).
+ * - anything else (PROSE-BEARING tools: a dispatched subagent, a workflow
+ *   script, any text-carrying tool) → `reason |args:<hash of the args text>`
+ *   (v0.15.2). The classifier now SEES those arguments (`argsPreviewOf`), so
+ *   the key must describe them too: before this, two dispatches that shared a
+ *   justification but carried different payloads produced ONE signature, and
+ *   a cached ALLOW for the benign payload was handed to the hostile one with
+ *   no model involved (review S1). The hash keeps the key short so a long
+ *   model-controlled `reason` cannot truncate the subject out under maxChars.
  */
 export function toolArgsKey(args: unknown, reason: string): string {
   if (typeof args === 'object' && args !== null) {
@@ -74,6 +81,13 @@ export function toolArgsKey(args: unknown, reason: string): string {
       // resurrect same-reason/different-dir sharing (v0.14.4 re-review #1).
       return `${String(reason ?? '')} |dirs:${hashString(JSON.stringify([...dirs].sort()))}`;
     }
+    let argsText: string;
+    try {
+      argsText = JSON.stringify(args) ?? '';
+    } catch {
+      argsText = '';
+    }
+    if (argsText) return `${String(reason ?? '')} |args:${hashString(argsText)}`;
   }
   return String(reason ?? '');
 }

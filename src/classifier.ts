@@ -554,15 +554,32 @@ export async function fastFilter(
   });
   if (!res) return null;
   if (res.reasonKind === 'error' || res.reasonKind === 'aborted') return null;
-  // Parse a standalone 0/1 digit (reasoning models may emit prose around it).
-  const m = res.text.match(/(^|\D)([01])(\D|$)/);
-  const d = m?.[2];
+  const d = parseFastFilterDigit(res.text);
   if (d === '0') return false; // safe
   if (d === '1') return true; // needs review
   logger?.warn(
-    `fastFilter no 0/1 digit (${provider}/${model}); raw=${JSON.stringify(res.text.slice(0, 300))} (length=${res.text.length}, reason=${res.reasonKind})`,
+    `fastFilter no unambiguous 0/1 digit (${provider}/${model}); raw=${JSON.stringify(res.text.slice(0, 300))} (length=${res.text.length}, reason=${res.reasonKind})`,
   );
-  return null; // malformed → caller decides
+  return null; // malformed/ambiguous → caller runs the full review (fail-closed)
+}
+
+/**
+ * Parse the fast filter's one-digit reply.
+ *
+ * Exact `0`/`1` wins. A SHORT reply led by the digit ("0 (safe)") is tolerated.
+ * Everything else fails closed: the filter's input now carries the COMMAND TEXT
+ * (v0.15.1), so a chatty reply echoes the command (`v0.15.0`, `exit 0`) — an
+ * echoed digit must never be read as a verdict, and an echo with only zeros
+ * used to be accepted as "safe" (review M3).
+ */
+export function parseFastFilterDigit(reply: string): '0' | '1' | null {
+  const t = reply.trim().replace(/^[*`\s]+|[*`\s]+$/g, '');
+  if (t === '0' || t === '1') return t;
+  if (t.length <= 24) {
+    const lead = t.match(/^([01])(?!\d)/);
+    if (lead && !/(^|\D)[01](\D|$)/.test(t.slice(1))) return lead[1] as '0' | '1';
+  }
+  return null;
 }
 
 /**
@@ -599,6 +616,39 @@ export async function classify(
   return verdict;
 }
 
+/** Character budget for the prose-bearing args preview (v0.15.1). */
+export const ARGS_PREVIEW_CHARS = 600;
+
+/**
+ * A single, truncated preview of a tool call's arguments, for tools that carry
+ * NEITHER a command nor target paths (v0.15.1, review M2).
+ *
+ * Such a call — a dispatched subagent, a workflow script, any text-carrying tool
+ * — used to reach both classifier stages with the agent's justification and
+ * nothing else: the narration-only defect v0.15.1 fixed for bash and file tools
+ * was still live for every other tool, while the prose-scope change had just
+ * removed the deny band's only view of those payloads.
+ */
+export function argsPreviewOf(args: unknown): string | undefined {
+  if (args === null || args === undefined) return undefined;
+  let text: string;
+  try {
+    text = typeof args === 'string' ? args : JSON.stringify(args);
+  } catch {
+    return undefined;
+  }
+  if (!text) return undefined;
+  // Never leave a lone high surrogate behind (a cut inside an emoji pair).
+  const cut = truncateToChars(text, ARGS_PREVIEW_CHARS).replace(/[\uD800-\uDBFF]$/, '');
+  return cut.replace(/\s+/g, ' ');
+}
+
+/** Whether a preview was cut short — a truncated payload hides its own tail, so
+ * callers force the structured review rather than let the filter decide it. */
+export function previewTruncated(preview: string | undefined): boolean {
+  return preview !== undefined && preview.includes('(truncated)');
+}
+
 /**
  * Build the one-token fast filter's input (v0.15.1).
  *
@@ -616,9 +666,14 @@ export function actionSummaryOf(
   reason: string | undefined,
   command?: string,
   paths?: readonly string[],
+  argsPreview?: string,
 ): string {
   const action = command?.trim() || (paths && paths.length > 0 ? paths.join(', ') : '');
   const lines = [action ? `${toolName}: ${action}` : toolName];
+  // Prose-bearing tools (no command, no paths) would otherwise hand the filter
+  // narration ONLY — the defect v0.15.1 set out to fix, still live for every
+  // non-bash/non-file tool (v0.15.1, review M2).
+  if (!action && argsPreview?.trim()) lines.push(`arguments: ${argsPreview.trim()}`);
   if (reason?.trim()) lines.push(`justification: ${reason.trim()}`);
   return lines.join('\n');
 }
@@ -640,6 +695,7 @@ export async function classifyTwoStage(
   ctx: Context,
   options: ClassifyOptions,
   actionSummary: string,
+  forceReview = false,
 ): Promise<Verdict | null> {
   options.logger?.info(
     `classifier route: ${options.provider}/${options.model} (reasoningEffort=${options.reasoningEffort ?? 'default'})`,
@@ -655,9 +711,17 @@ export async function classifyTwoStage(
     options.logger,
     options.onAttemptFail,
   );
-  if (needsReview === false) {
+  if (needsReview === false && !forceReview) {
     return { decision: 'allow', reason: 'one-token filter: routine/safe action' };
   }
-  // true (needs review) or null (filter failed) → full structured review.
+  if (needsReview === false && forceReview) {
+    // The filter said "routine/safe", but the action can affect other people or
+    // systems: this decision belongs to the structured review, which is the only
+    // stage that reads the user's authorization (v0.15.1).
+    options.logger?.info(
+      'one-token filter said safe, but the action can leave this machine — running the structured review anyway',
+    );
+  }
+  // true (needs review), null (filter failed/ambiguous), or forced → full review.
   return classify(ctx, options);
 }

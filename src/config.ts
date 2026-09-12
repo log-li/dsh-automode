@@ -46,10 +46,15 @@ export const DEFAULT_DENY = [
   'id_rsa|id_ed25519',
   '(?<![a-zA-Z0-9?.])\\.pem\\b',
   '(?<![a-zA-Z0-9?.])\\.env\\b',
-  // Credential STORES, not the bare word (v0.15.1): "credentials" used to match
-  // any text containing it, so a command or document that merely mentioned the
-  // topic was hard-rejected before the classifier ever saw it.
-  '(?<![a-zA-Z0-9])(?:\\.credentials|credentials\\.(?:json|ya?ml))\\b',
+  // Credential stores. The token match is deliberately BROAD here: the v0.15.1
+  // attempt to narrow it to store *filenames* silently lost `~/.git-credentials`
+  // (git's plaintext helper store), `~/.config/gcloud/credentials` and a bare
+  // `credentials` argument — and a non-escalated bash call never reaches the
+  // classifier, so nothing else would have caught them (v0.15.1 revert).
+  // Prose false positives are handled by the prose SCOPE, not by narrowing the
+  // pattern: this source is listed in SUBJECT_ONLY_DENY_SOURCES (bands.ts), so
+  // prose-bearing tools skip it while bash command text keeps full coverage.
+  '(?<![a-zA-Z0-9])credentials\\b',
 ] as const;
 
 /** Zero-LLM allow patterns (prefix globs). */

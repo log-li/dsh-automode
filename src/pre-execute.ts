@@ -16,11 +16,11 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConfigType } from './config.js';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
-import { compileRegex, bashCommandOf, compileGlob, matchAllow, isCompositeShell, bashWriteDestinations, isFileTool, collectPaths, collectDenyPaths, scanDenyBand } from './bands.js';
+import { compileRegex, bashCommandOf, compileGlob, matchAllow, isCompositeShell, bashWriteDestinations, isFileTool, collectPaths, collectDenyPaths, scanDenyBand, looksMachineLeaving } from './bands.js';
 import { VerdictCache, hashString } from './cache.js';
 import { Breaker } from './breaker.js';
 import { AllowPathBridge } from './bridge.js';
-import { actionSummaryOf, classifyFailureCategory, classifyTwoStage, renderUserIntent, resolveRoute, type Verdict } from './classifier.js';
+import { actionSummaryOf, argsPreviewOf, previewTruncated, classifyFailureCategory, classifyTwoStage, renderUserIntent, resolveRoute, type Verdict } from './classifier.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from './prompt.js';
 import { expandDefaults } from './config.js';
 import { permissionSnapshot } from './permission-state.js';
@@ -171,7 +171,7 @@ export function registerPreExecute(
       }
 
       sid = String(session.id ?? '?');
-      const commandText = bashCommandOf(exec.arguments);
+      const commandText = bashCommandOf(exec.arguments, toolName);
 
       // 1. Read-only tools → allow (unless deny matched)
       if (config.readOnlyTools.includes(toolName)) {
@@ -379,6 +379,7 @@ export function registerPreExecute(
             userIntent,
             command: commandText || undefined,
             paths: isFileToolCall ? targetPaths : undefined,
+            argsPreview: !commandText && !isFileToolCall ? argsPreviewOf(exec.arguments) : undefined,
           },
           softAllowRules,
           softDenyRules,
@@ -408,9 +409,16 @@ export function registerPreExecute(
               });
             },
           },
-          // v0.15.1: give the fast filter the ACTION (command / paths), not
-          // only the escalation justification — see actionSummaryOf().
-          actionSummaryOf(toolName, escReason, commandText || undefined, isFileToolCall ? targetPaths : undefined),
+          // v0.15.1: give the fast filter the ACTION (command / paths) and, for
+          // prose-bearing tools, the args preview (v0.15.1) — never the
+          // escalation justification alone.
+          actionSummaryOf(toolName, escReason, commandText || undefined, isFileToolCall ? targetPaths : undefined, input.argsPreview),
+          // A prose payload is precisely where an authorization check matters, and no
+          // shape list can read natural language — so any call judged from a preview is
+          // reviewed, never decided by the one-token filter (review M2).
+          looksMachineLeaving(commandText || input.argsPreview || '') ||
+            previewTruncated(input.argsPreview) ||
+            Boolean(input.argsPreview),
         );
 
         if (verdict) {
