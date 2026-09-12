@@ -54,8 +54,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VER="$GITHUB_REF_NAME"
-          : "${VER:?expected a tag ref (pushed tag v*) or set a version}"
+          # 版本从 package.json 取，而不是 $GITHUB_REF_NAME：后者在
+          # workflow_dispatch（在 main 上手动触发）时会等于分支名 "main"，
+          # 会让 GitHub Release 被命名成 "main"。package.json 才是发布的真相，
+          # 且与 `npm publish` 实际发出去的版本一致。
+          VER="v$(node -p 'require("./package.json").version')"
           python3 - "$VER" <<'PY' > /tmp/release-notes.md
           import re, sys
           ver = sys.argv[1].lstrip('v')
