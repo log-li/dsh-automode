@@ -21,6 +21,8 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 
 ## [0.15.0] — 2026-09-12
 
+> **Never published to npm.** The first 0.15.0 release run failed in CI, and by the time the classifier-prompt work was ready the git tag `v0.15.0` already pointed at an earlier commit — a published tag is not moved, so it was superseded instead. Everything in this section ships in **0.15.1**.
+
 ### Added
 - **The preset-icon patch now ships with the package** (`patches/dsh-permission-preset-icon.mjs`, plus `npm run patch:icon`). Stock DSH hardcodes the three built-in permission glyphs and silently ignores a preset's `icon`, so the bolt could previously only render on a machine that had patched DSH by hand — with the script living outside any repo, nobody else could reproduce it. The READMEs now document the command, what it edits, and that a DSH upgrade or plugin reinstall wipes it.
 - The script **discovers** its targets instead of hardcoding them: it scans every `~/.dsh/profiles/*/node_modules` (any profile name) plus the global install root (`npm root -g`, `~/.npm-global`, the two system prefixes), and patches each copy it finds. The previous version only ever worked on one profile named `web` with a `~/.npm-global` layout.
@@ -98,6 +100,8 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 - **「外部状态」这个说法被它真正代表的判据取代。** 旧的无条件句（「改动共享/生产/外部状态，即使用户的话可被读作许可」）比威胁模型更钝：它把「用户已批准、只是内容需要过目」与「注入的指令在假冒用户」压成一件事，并把一个无害的修复（移动一个从未产出过发布物的 tag）读成危险动作。现在改为点名**真正的属性** —— 效果**会离开本机且无法收回**（即其他人或系统受影响且收不回）—— 并要求分类器判断该属性而非字面措辞。底线不变：这类动作**仍然不能仅凭用户请求获得许可**。
 
 ## [0.15.0] — 2026-09-12
+
+> **从未发布到 npm。** 0.15.0 的首次发布在 CI 里失败；等分类器 prompt 的改动就绪时，git tag `v0.15.0` 已经指向更早的提交 —— 已推送的 tag 不移动，于是改用后继版本。本节内容随 **0.15.1** 首发。
 
 ### 新增
 - **预设图标补丁随包发布**（`patches/dsh-permission-preset-icon.mjs`，并加了 `npm run patch:icon`）。原生 DSH 把三个内置权限 glyph 写死在客户端、静默忽略预设的 `icon`，所以闪电此前只在一台手工打过 DSH 补丁的机器上能显示 —— 而那个脚本不在任何仓库里，别人根本无法复现。两份 README 现在写明了命令、它改什么、以及 DSH 升级或重装插件会冲掉它。
