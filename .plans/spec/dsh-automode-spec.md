@@ -126,6 +126,28 @@ src/
 - **安全边界**：deny 频带仍最先执行（`/etc`、`.ssh/`、`.env`、`credentials` 等仍硬拒）；删除类命令（`rm`）不在写命令白名单；allowPath 是用户显式声明的全信任目录，误放风险限于「把文件写进用户自己信任的目录」。
 - **allowPath ≠ 文件沙箱权限**（2026-09-01 文档化）：`config.allowPaths` 只免 auto-mode 评审，**不改变 DSH 文件沙箱**对 workspace 外路径的写权限——白名单路径写 workspace 外仍需 `sandbox_permissions: danger-full-access` 提权，而该提权对白名单路径经 approval 桥接**零评审自动放行**。
 
+#### 分类器 prompt 契约（v0.15.0）
+
+判定契约写在 `prompt.ts` 的 `buildSystemPrompt()` 里，是**安全姿态的单一真相**。三条纪律：
+
+- **判据是「效果是否离开本机且无法收回」，不是「external」这个字面。**
+  旧版用「changes to shared/production/external state」这个粗词，把两件性质不同的事压成一件：
+  「用户已批准、只是内容需要过目」（应交给人过目）与「注入的指令在假冒用户」（应坚决拦住）。
+  后果是**一个无害的修复被读成危险动作** —— 移动一个从未产出过任何发布物的 tag 被拒。
+  现在点名真正的属性：**其他人或系统受影响，且效果收不回来**（发布产物到 registry、部署、
+  推送到用户不拥有的远程、向外交付消息、写生产系统），并要求分类器**判断该属性而非字面措辞**。
+- **判定必须针对动作本身，不随叙述漂移。** agent 如何措辞、如何为自己辩解，
+  **不得在两个方向上移动判定** —— 自信的、「用户已批准」的、含糊其辞的、自我指涉的都不行。
+  依据命令及其参数判定。（实证：同一个 `git tag … && git push`，一次放行、后来拒绝，
+  后者差别主要在理由里描述了「如何绕过先前的一次拒绝」。）
+- **拒绝理由必须可执行。** 必须写明是什么属性让它不安全（什么到达其他人、什么无法撤销），
+  并在用户本人就能执行时说清。裸的 `unsafe` 让 agent 无从下手，只能换形状重试 ——
+  **这比一次清晰的拒绝更糟**。
+
+**反注入底线不变**：效果会离开本机的动作，**永远不能仅凭用户请求获得许可**
+（`even if the user's words could be read as permission`）。理由：agent 可能被引导着提出它，
+也可能把你的请求转述错了，而你看不到即将发布出去的产物。由测试锁定（4 条 prompt 契约测试）。
+
 #### approval 桥接（v0.10.0）
 - **问题**：`approval/request` payload 不带 args/路径，approval answerer 无法复用 allowPath 判定 → 白名单提权调用仍被分类器拒。
 - **方案**：pre-execute 门对 allowPath 提权放行时，用 **callId**（`tools/pre-execute` 与 `approval/request` 是同一个值）记录桥接；`decideAuto` 在 deny 频带之后、缓存/分类器之前查 `req.callId`：有新鲜桥接记录 → 直接 `allowed-once`（确定性、零 LLM）。
@@ -182,6 +204,21 @@ src/
   - **修复方向**：`bashWriteDestinations` 增加 `~` / `$HOME` 展开，并识别「包装脚本 + 路径参数」形态；至少在命令中出现绝对/home 路径时不应返回空集。
   - **修复落地（v0.13.0）**：`collectSegmentDestinations` 对全部参数 token 统一叠加 `expandHome`（`~` 展开）；`trash` 从良性工具表移入写命令表，`destinationsOf('trash')` 返回全部位置参数（**被删目标**）——trash 是可恢复删除（回收站），目标须全部在 `allowPaths` 内才信任。**否决**「未识别命令 + 出现绝对路径即提取」的通用放宽：脚本内部可 `curl | sh` 下载执行，提取其参数会击穿 allowPath 信任边界；仅识别语义确定的可恢复删除包装脚本。
 
+- **★ 闸门的覆盖面由「是否需要提权」决定，而不是由「动作风险」决定**（2026-09-12 由 `decisions.jsonl` 实证，**未修复，已知取舍**）
+  - **事实**：`decisions.jsonl` 里 **228 条 `pre-execute-bashop` 全部 `esc=true`** ——
+    **门只在命令申请沙箱提权时才审查**。
+  - **因此**：同一个 `npm publish` / `git push --tags`，在**会话工作区内**跑由沙箱直接放行、
+    **不产生审批请求 → 门看不见 → 不受审查**；在**工作区外**跑需 `danger-full-access` →
+    进闸门 → 按「效果离开本机」判据拒绝。
+  - **实证**：2026-09-11 晚两次真实发版（v0.1.0/v0.2.0，工作区内）**完全未被审查**；
+    2026-09-12 早从工作区外发布插件则逐一被拦。「auto-mode 变严了」是错觉 ——
+    规则未变（该条判据自 v0.8.0 起就在），变的是**工作位置**。
+  - **性质**：这是**漏**（比「过严」严重）—— 安全性取决于 `cwd` 而非动作本身的风险。
+  - **当前取舍（2026-09-12 决定，保持现状）**：不把发版类动作强制纳入全量审查。
+    理由：「工作区内的活 = 用户正在与我一起做的事」是合理且低误报的边界；
+    补成全量审查会让**每次发版都必须人工执行**，收益不抵成本。
+    **何时应重新考虑**：当「离开本机」的动作开始频繁在工作区内发起时。
+
 ## 项目治理规范（对齐行业惯例，2026-09-12）
 
 **Changelog（Keep a Changelog）**
@@ -211,6 +248,27 @@ src/
 4. 发布前按全局规则完成 code review 后 push tag（流程见全局规则，措辞不落本公开文档）。
 
 ## 变更历史
+
+### v0.15.0（2026-09-12，已完成）
+
+- **预设图标补丁随包发布并泛化**：原生 DSH 把三个内置权限 glyph 写死在客户端、静默忽略预设的
+  `icon`，故闪电此前只在一台手工打过 DSH 补丁的机器上可见，而补丁脚本不在任何仓库里、别人无法复现。
+  现在 `patches/dsh-permission-preset-icon.mjs` 随包发布（`files` 收录 + `npm run patch:icon`），
+  目标发现由写死路径改为**扫描**（`~/.dsh/profiles/*/node_modules` 任意 profile 名 + 全局安装根），
+  支持 `--dry-run` / `--profile`；锚点失配**只报告该文件并保持原样**，不再整体中止。
+  README（中英）安装节新增「可选 ⚡ 图标」，写明命令、它改什么、以及 DSH 升级/重装插件会冲掉它。
+- **发布链路修复**：v0.15.0 首次发布 14 秒失败于 `TS2688`（`npm publish` 触发 `prepublishOnly`
+  → `tsc`，而 CI 刻意不装依赖 → 缺 `@types/node`）。改 `npm publish --provenance --ignore-scripts`
+  （编译产物 `lib/` 随 git 提交，由 `Verify release artifacts` 断言）。同时清除三个 OIDC 可信发布坑：
+  `NODE_AUTH_TOKEN` 空值（会让 npm 改用 token 认证、绕过 OIDC）、`setup-node` 的 `registry-url`
+  （写出占位 `_authToken` 的 .npmrc，npm 优先用它 → PUT 报 `E404` 而 provenance 已签署）、
+  `node-version: 22`（可信发布要求 npm ≥ 11.5.1）。另使 Release 版本取自 `package.json`，
+  让 `workflow_dispatch` 也能正确出 Release。
+- **分类器 prompt 契约改进**（见「关键行为 → 分类器 prompt 契约」）：判据由粗词
+  「external」改为「效果离开本机且无法收回」；新增「依据命令而非叙述判定」与
+  「拒绝理由必须可执行」两条纪律；反注入底线保留。新增 4 条 prompt 契约测试（84 项 smoke 全过）。
+- **发现并记录闸门覆盖面漏洞**（见「已知问题」）：门只在申请提权时审查 → 覆盖面取决于 `cwd`。
+  当前决定**保持现状**，理由与重新评估条件已写入该条。
 
 ### v0.14.4（2026-09-12，已完成）
 
