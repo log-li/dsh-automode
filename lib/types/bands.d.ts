@@ -64,6 +64,40 @@ export declare function collectDenyPaths(args: unknown): string[];
  * identical so the hard-deny band can never diverge between the two.
  */
 export declare function denyHaystackFor(toolName: string, args: unknown, commandText: string): string;
+/**
+ * Built-in deny patterns that name a sensitive SUBJECT (a file, a store, an
+ * environment variable) rather than an executable OPERATION.
+ *
+ * Matching these against a prose-bearing call — a subagent prompt, a workflow
+ * script, an arbitrary tool's text argument — punishes *mentioning* a topic:
+ * a code review that says "the key file", or a doc about the env file, was
+ * hard-rejected before any classifier saw the call, and the only way through
+ * was to mangle the wording. That is the same rule the file-tool haystack has
+ * followed since v0.11.1 ("mentioning a sensitive filename in prose is not a
+ * leak"); v0.15.1 extends it to every tool whose arguments are prose.
+ *
+ * OPERATION-shaped patterns (pipe-to-shell, inline key material, system-path
+ * moves, docker volume removal) still apply everywhere: they describe what an
+ * operation does, so prose that contains them is at least worth failing closed
+ * on. The real operations such prose may later cause are separate tool calls
+ * whose own command text and target paths are scanned in full.
+ *
+ * Every source here MUST exist in DEFAULT_DENY; a smoke test guards that.
+ */
+export declare const SUBJECT_ONLY_DENY_SOURCES: ReadonlySet<string>;
+/** Whether this call's arguments are prose (no command text, not a file tool). */
+export declare function isProseCarrier(toolName: string, commandText: string): boolean;
+/**
+ * The deny patterns to apply to a prose-bearing call: the built-in
+ * subject-only patterns are dropped, everything else (including every
+ * operator-configured pattern) still applies. Operator patterns are never
+ * filtered — they are explicit rule authoring, not an incidental word.
+ *
+ * NOTE: `RegExp.source` escapes forward slashes (`\.ssh/` → `\.ssh\/`), so the
+ * comparison must normalize before matching the raw DEFAULT_DENY strings —
+ * otherwise every path-shaped pattern silently stays in the prose scan.
+ */
+export declare function proseSafeDenyPatterns(patterns: readonly RegExp[]): RegExp[];
 /** Check whether an action matches a deny pattern, an allow pattern, or neither. */
 export declare function classifyBand(toolName: string, reason: string, args: unknown, denyPatterns: RegExp[], allowGlobs: RegExp[], readOnlyTools: readonly string[]): {
     action: 'allow' | 'deny' | 'classify';

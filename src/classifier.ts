@@ -600,6 +600,30 @@ export async function classify(
 }
 
 /**
+ * Build the one-token fast filter's input (v0.15.1).
+ *
+ * The filter must judge the ACTION, so the summary leads with the command text
+ * or the target paths and only carries the agent's justification as an
+ * annotation. Before v0.15.1 both call sites passed `${toolName} (${reason})`
+ * — narration only — and a "0" from the filter returns ALLOW without ever
+ * running the full review: the prompt contract was bypassed on the one path
+ * where narration was the sole input, in the allow direction. Measured: the
+ * same `git tag … && git push` was allowed 5/5 with a confident justification
+ * and rejected 5/5 with a hedged one.
+ */
+export function actionSummaryOf(
+  toolName: string,
+  reason: string | undefined,
+  command?: string,
+  paths?: readonly string[],
+): string {
+  const action = command?.trim() || (paths && paths.length > 0 ? paths.join(', ') : '');
+  const lines = [action ? `${toolName}: ${action}` : toolName];
+  if (reason?.trim()) lines.push(`justification: ${reason.trim()}`);
+  return lines.join('\n');
+}
+
+/**
  * Two-stage classification (spec decision chain, and README "two-stage
  * classifier"): run the cheap one-token fast filter first; only flagged or
  * failed-filter actions proceed to the full structured review.

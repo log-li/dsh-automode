@@ -29,6 +29,7 @@ import { classifyBand, compileRegex, compileGlob, bashCommandOf, isFileTool, col
 import { findAllowRule, findDenyRule, isAllowlisted } from './rules.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from './prompt.js';
 import {
+  actionSummaryOf,
   classifyFailureCategory,
   classifyTwoStage,
   renderTranscript,
@@ -357,7 +358,10 @@ async function decideAuto(
         });
       },
     },
-    `${toolName}${reason ? ` (${reason})` : ''}`,
+    // v0.15.1: the fast filter must see the ACTION (command text / target
+    // paths), not just the agent's justification — a reason-only summary let a
+    // confidently worded justification skip the review entirely.
+    actionSummaryOf(toolName, reason, commandText || undefined, input.paths),
   );
 
   if (verdict) {

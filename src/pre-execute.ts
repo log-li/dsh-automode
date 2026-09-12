@@ -20,7 +20,7 @@ import { compileRegex, bashCommandOf, matchRule, compileGlob, matchAllow, isComp
 import { VerdictCache, hashString } from './cache.js';
 import { Breaker } from './breaker.js';
 import { AllowPathBridge } from './bridge.js';
-import { classifyFailureCategory, classifyTwoStage, renderUserIntent, resolveRoute, type Verdict } from './classifier.js';
+import { actionSummaryOf, classifyFailureCategory, classifyTwoStage, renderUserIntent, resolveRoute, type Verdict } from './classifier.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from './prompt.js';
 import { expandDefaults } from './config.js';
 import { permissionSnapshot } from './permission-state.js';
@@ -411,7 +411,9 @@ export function registerPreExecute(
               });
             },
           },
-          `${toolName}${escReason ? ` (${escReason})` : ''}`,
+          // v0.15.1: give the fast filter the ACTION (command / paths), not
+          // only the escalation justification — see actionSummaryOf().
+          actionSummaryOf(toolName, escReason, commandText || undefined, isFileToolCall ? targetPaths : undefined),
         );
 
         if (verdict) {

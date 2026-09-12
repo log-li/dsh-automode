@@ -117,7 +117,7 @@ The rule system has two layers:
 
 ### Hard boundary (deterministic, never goes to classifier)
 
-- **`deny`** — regex patterns that hard-reject. First match wins. Evaluated before everything else. Use for exfiltration, secrets, sensitive targets, dangerous commands.
+- **`deny`** — regex patterns that hard-reject. First match wins. Evaluated before everything else. Use for exfiltration, secrets, sensitive targets, dangerous commands. **The band matches only OPERATIONS** (v0.15.1): bash scans the command text and file tools scan their target paths; tools whose arguments are prose (a `subagent` prompt, a script body) are held only to the *operation-shaped* built-in patterns — **mentioning a sensitive topic is not handling it**, so documents and reviews that discuss env files or keys are no longer hard-rejected, while real credential-store filenames and inline key material still are.
 - **`allow`** — prefix-glob patterns that approve without any LLM call. Evaluated after deny. Use for routine commands you trust completely.
 
 ### Classifier guidance (prose, fed to the LLM)
@@ -199,7 +199,7 @@ The icon is **cosmetic** — behavior is identical whether it renders. It shows 
 
 The classifier uses two stages to minimize LLM cost:
 
-1. **One-token filter** (~1 token): asks the LLM for a single digit (0 = safe, 1 = needs review). Uses a generous token budget and robust digit parsing so reasoning models aren't starved, and honors `classifier.reasoningLevel` as the reasoning effort (`off` = no reasoning). Most routine actions return 0 and skip stage 2.
+1. **One-token filter** (~1 token): asks the LLM for a single digit (0 = safe, 1 = needs review). Uses a generous token budget and robust digit parsing so reasoning models aren't starved, and honors `classifier.reasoningLevel` as the reasoning effort (`off` = no reasoning). Most routine actions return 0 and skip stage 2. **The filter is given the ACTION, not the narration** (v0.15.1): the command text (bash) or target paths (file tools) come first and the agent's justification is only an annotation — otherwise a confidently worded reason could wave a machine-leaving command through with a 0 and no review at all.
 2. **Structured review**: only runs when stage 1 flags the action. Returns a full verdict with reason.
 
 This means most tool calls cost ~1 token of classifier overhead. Only borderline actions incur the full classifier cost.
