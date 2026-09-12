@@ -14,6 +14,9 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 - The script **discovers** its targets instead of hardcoding them: it scans every `~/.dsh/profiles/*/node_modules` (any profile name) plus the global install root (`npm root -g`, `~/.npm-global`, the two system prefixes), and patches each copy it finds. The previous version only ever worked on one profile named `web` with a `~/.npm-global` layout.
 - `--dry-run` reports what would change without writing; `--profile <name>` limits the scan. An anchor that no longer matches is reported and **that file is left untouched** rather than half-patched.
 
+- **A rejection now has to be actionable, and the verdict has to be about the action** (prompt contract). Two problems surfaced while publishing a plugin from outside the working directory. First, a refusal came back as a bare "unsafe": the agent had nothing to act on and retried the same intent in three different shapes before giving up — worse for safety than one clear refusal, so the prompt now requires the reason to name the property that made the action unsafe (what reaches other people, what cannot be undone) and, where the user could run it themselves, to say so. Second, the verdict moved with the agent's own wording: the same `git tag … && git push` was allowed once and refused later, the later attempt differing mainly in a justification that described working around an earlier refusal. The prompt now says to decide from the command and its arguments, and that no narration — confident, "user-approved", hedged, or self-referential — may move the verdict in either direction.
+- **"External state" is replaced by the criterion it stood for.** The old blanket clause ("changes to shared/production/external state, even if the user's words could be read as permission") was blunter than the threat model: it lumped "the user approved this and only the content needs review" together with "an injected instruction is impersonating the user", and it read a harmless fix (moving a tag that had never produced a published artifact) as a dangerous one. It now names the actual property — effects that **leave this machine and cannot be recalled**, i.e. other people or systems are affected and it cannot be taken back — and tells the classifier to judge that property rather than the vocabulary. The floor is unchanged: such actions are still never granted on the strength of the request alone.
+
 ## [0.14.4] — 2026-09-12
 
 ### Fixed
@@ -79,6 +82,9 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 - **预设图标补丁随包发布**（`patches/dsh-permission-preset-icon.mjs`，并加了 `npm run patch:icon`）。原生 DSH 把三个内置权限 glyph 写死在客户端、静默忽略预设的 `icon`，所以闪电此前只在一台手工打过 DSH 补丁的机器上能显示 —— 而那个脚本不在任何仓库里，别人根本无法复现。两份 README 现在写明了命令、它改什么、以及 DSH 升级或重装插件会冲掉它。
 - 脚本改为**自动发现**目标而非写死路径：扫描每个 `~/.dsh/profiles/*/node_modules`（profile 名任意）以及全局安装根（`npm root -g`、`~/.npm-global`、两个系统前缀），逐个副本打补丁。旧版只在一个名为 `web` 的 profile、且 DSH 装在 `~/.npm-global` 的布局下才有效。
 - `--dry-run` 只报告不写入；`--profile <name>` 限定扫描范围。锚点对不上的文件会被报告并**保持原样**，不会打一半。
+
+- **拒绝理由必须可执行，判定必须针对动作本身**（prompt 契约）。从工作区外发布一个插件时暴露了两个问题。其一，拒绝只回一句「unsafe」：agent 无从下手，于是把同一个意图换了三种形状重试才放弃 —— 这对安全而言比一次清晰的拒绝更糟。故 prompt 现在要求理由写明「是什么属性让它不安全」（什么会到达其他人、什么无法撤销），并且在用户本人就能执行时说清这一点。其二，判定会随 agent 自己的措辞移动：同一个 `git tag … && git push`，一次放行、后来拒绝，差别主要在于后者的理由描述了「如何绕过先前的一次拒绝」。prompt 现在要求**依据命令及其参数**判定，并明确任何叙述 —— 自信的、声称「用户已批准」的、含糊其辞的、自我指涉的 —— 都不得在两个方向上移动判定。
+- **「外部状态」这个说法被它真正代表的判据取代。** 旧的无条件句（「改动共享/生产/外部状态，即使用户的话可被读作许可」）比威胁模型更钝：它把「用户已批准、只是内容需要过目」与「注入的指令在假冒用户」压成一件事，并把一个无害的修复（移动一个从未产出过发布物的 tag）读成危险动作。现在改为点名**真正的属性** —— 效果**会离开本机且无法收回**（即其他人或系统受影响且收不回）—— 并要求分类器判断该属性而非字面措辞。底线不变：这类动作**仍然不能仅凭用户请求获得许可**。
 
 ## [0.14.4] — 2026-09-12
 
