@@ -209,6 +209,30 @@ test('ask_user_question error result is NOT intent (a cancel is not a grant)', (
   const out = renderUserIntent(messages, 10);
   assert.ok(!out.includes('answers'), 'errored ask_user_question must NOT be intent');
 });
+console.log('docs vs behavior (a release shipped stale policy text once)');
+test('README describes the CURRENT policy and carries none of the superseded wording', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const readmes = ['../README.md', '../README.zh.md'].map((rel) => [rel, readFileSync(new URL(rel, import.meta.url), 'utf8')]);
+  const banned = ['risk-based', '风险导向', 'stays forbidden', '仍被禁止'];
+  for (const [rel, text] of readmes) {
+    for (const phrase of banned) {
+      assert.ok(!text.includes(phrase), `${rel} still says "${phrase}" — superseded by the authorization policy`);
+    }
+    assert.ok(/arbiter|最终决断者/.test(text), `${rel} must state that the user is the arbiter`);
+    assert.ok(/hard floor|硬底线/.test(text), `${rel} must document the hard floor`);
+    assert.ok(text.includes('ask_user_question'), `${rel} must document the double-check loop`);
+  }
+  // The changelog section for the version being shipped must not describe the
+  // superseded floor either (history sections may quote it as history).
+  const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
+  const start = changelog.indexOf(`## [${pkg.version}]`);
+  assert.ok(start >= 0, `CHANGELOG must have a section for ${pkg.version}`);
+  const next = changelog.indexOf('## [', start + 5);
+  const section = changelog.slice(start, next < 0 ? undefined : next);
+  for (const phrase of ['stays forbidden', 'still never granted on the strength of the request', '仍然不能仅凭用户请求获得许可']) {
+    assert.ok(!section.includes(phrase), `CHANGELOG [${pkg.version}] still says "${phrase}"`);
+  }
+});
 test('provenance: injections never authorize, a missing source stays a compat fallback', () => {
   const mk = (source, text) => ({ role: 'user', ...(source ? { source } : {}), content: [{ type: 'text', text }] });
   assert.ok(renderUserIntent([mk({ kind: 'user' }, 'push it')], 6).includes('push it'), 'human message authorizes');

@@ -380,6 +380,12 @@ src/
 2. Actions 门禁：build + smoke 80 项 + bridge-flow 全过后 → `npm publish`（token = repo secret `NPM_TOKEN`；2027 npm 方向：改 Trusted Publishing/OIDC + `npm publish --provenance`）→ 自动创建 GitHub Release（changelog 从 CHANGELOG.md 抽取）。
 3. 前置一次性配置：GitHub repo secret `NPM_TOKEN`（npmjs 生成 Automation token），或在 npmjs Trusted Publishers 配 OIDC。
 4. 发布前按全局规则完成 code review 后 push tag（流程见全局规则，措辞不落本公开文档）。
+5. **★ 发布前必做：语义/行为变化 → 逐段重读 README 与 CHANGELOG**（不能只改「我记得动过的那几处」）。
+   2026-09-12 v0.15.1 就因此把**旧政策表述**随包发出（README 仍写 `risk-based`/`stays forbidden`，
+   CHANGELOG 的 0.15.1 段仍写「底线不变：仍然不能仅凭用户请求获得许可」）。现已加**机械守卫**：
+   `npm test` 会断言 README 中英不含被取代的政策措辞、且都写明「用户是最终决断者 / 硬底线 /
+   double-check 流程」，并断言 **CHANGELOG 当前版本段**不含被取代的底线句。
+   教训：**能被测试卡住的，就不要靠记忆**；发布流程必须有一道「文档描述 == 当前行为」的机械关卡。
 
 ## 变更历史
 

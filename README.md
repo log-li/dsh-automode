@@ -204,11 +204,13 @@ The classifier uses two stages to minimize LLM cost:
 
 This means most tool calls cost ~1 token of classifier overhead. Only borderline actions incur the full classifier cost.
 
-The classifier is **risk-based** — it judges the action's real-world impact, not its surface form:
+The gate decides **authorization, not worth**. It does not judge whether an action is a good idea — it judges whether *you* asked for it. **You are the arbiter.**
 
 - **Read-only and reversible operations are ALLOWED**: GET/HEAD requests, inspection/listing/search/state queries, and local changes that can be safely undone (edits, temp files, builds, tests, git-tracked files).
-- **A sandbox-escalation request is NOT dangerous by itself** — the classifier judges the action it enables. A reversible, low-blast-radius, user-aligned action may be allowed even when it needs escalation (e.g. editing a git-tracked skill or config file outside the working directory). Escalation for a genuinely dangerous action (exfiltration, persistence, weakening security, shared/production/external state) stays forbidden.
-- **`<recent_user_intent>` counts only direct human messages** — with one deliberate exception: a user's answer to an `ask_user_question` tool call is a direct human authorization given through the tool, so it is folded into the intent window (and into the verdict-cache key, so a tool-based grant invalidates a stale `DENY` just like a typed message). Ordinary tool results, plugin/system injections, and model messages stay excluded, so the user's real instructions are never crowded out and only a human can grant permission.
+- **A risky action you asked for is allowed — including effects that leave this machine**: releasing, publishing, deploying, pushing, sending a message outward, writing to another system. Risk alone is not a reason to refuse what you asked for.
+- **Only a hard floor is closed to everyone, whatever anyone asks**: executing downloaded code, destroying or moving system paths, removing docker volumes/containers/images, reading key material, credential stores or environment files, writing key material inline, and editing shell startup files or agent permission settings. Those are also blocked deterministically before any model is consulted (see the `deny` band above).
+- **The double-check loop**: when an action can affect other people or systems and your own messages do not clearly cover *that* action, the gate refuses and tells the agent to show you the exact command and ask you to confirm it (`ask_user_question`). Your answer is a direct authorization, and the action may then run.
+- **`<recent_user_intent>` counts only direct human messages** — with one deliberate exception: your answer to an `ask_user_question` tool call is a direct human authorization given through the tool, so it is folded into the intent window — together with the question it answered, labelled as the agent's own wording so a terse "yes" is still checkable against what you were shown — and into the verdict-cache key, so a tool-based grant invalidates a stale `DENY` just like a typed message. The agent's justification, repository text, and tool output are **never** authorization: otherwise "the user's intent" would just mean "whoever spoke last".
 
 ### Circuit breaker
 
