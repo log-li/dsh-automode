@@ -333,12 +333,47 @@ function hasAskUserAnswer(message: Message, toolNames: Map<string, string>): boo
 }
 
 /**
+ * The questions the agent asked, keyed by the `ask_user_question` tool call id.
+ *
+ * Carried into the intent window so a terse answer ("yes") can be matched to the
+ * action it was about (v0.15.1). The question text is AGENT-authored and is
+ * labelled as such in the prompt: it disambiguates WHAT the user answered, it
+ * does not itself authorize anything, and it cannot widen their answer beyond
+ * its plain meaning.
+ */
+function askedQuestionsByCallId(messages: readonly Message[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of messages) {
+    if (m.role !== 'assistant') continue;
+    for (const b of m.content) {
+      if (b.type !== 'tool-call' || b.name !== 'ask_user_question') continue;
+      let args: unknown = b.arguments;
+      if (typeof args === 'string') {
+        try {
+          args = JSON.parse(args) as unknown;
+        } catch {
+          continue;
+        }
+      }
+      const questions = (args as { questions?: Array<{ question?: unknown }> } | null)?.questions;
+      if (!Array.isArray(questions)) continue;
+      const text = questions
+        .map((q) => (typeof q?.question === 'string' ? q.question.trim() : ''))
+        .filter(Boolean)
+        .join(' / ');
+      if (text) out.set(b.id, text);
+    }
+  }
+  return out;
+}
+
+/**
  * The user's answers inside an `ask_user_question` tool result. The tool
  * returns `{answers:[{id, selected:[...], custom?}]}` — an explicit
  * authorization the user gave THROUGH the tool. Parsed for readable intent;
  * if the payload is unparseable, the raw JSON text still counts as a signal.
  */
-function askUserAnswersText(message: Message): string {
+function askUserAnswersText(message: Message, questionByCallId: Map<string, string>): string {
   const parts: string[] = [];
   for (const b of message.content) {
     if (b.type !== 'tool-result') continue;
@@ -355,7 +390,15 @@ function askUserAnswersText(message: Message): string {
     }
     if (picked.length) parts.push(picked.join(', '));
   }
-  return parts.join(' ');
+  if (parts.length === 0) return '';
+  const answer = parts.join(' ');
+  const questions = [...questionByCallId.values()];
+  const asked = questions.length > 0 ? [...new Set(questions)].join(' / ') : '';
+  // The question is quoted and attributed so the classifier can tell the user's
+  // words from the agent's: it says what the answer is ABOUT, nothing more.
+  return asked
+    ? `${answer} [answering the agent's question: ${JSON.stringify(asked)}]`
+    : answer;
 }
 
 /**
@@ -378,6 +421,7 @@ export function renderUserIntent(
   maxMessages: number,
 ): string {
   const toolNames = toolNameByCallId(messages);
+  const askedQuestions = askedQuestionsByCallId(messages);
   const userMsgs: string[] = [];
   for (let i = messages.length - 1; i >= 0 && userMsgs.length < maxMessages; i--) {
     const m = messages[i];
@@ -396,7 +440,7 @@ export function renderUserIntent(
     // intent (an explicit authorization given through the tool). Ordinary
     // tool output must not crowd the intent window.
     if (srcKind === 'tool' && hasAskUserAnswer(m, toolNames)) {
-      const text = askUserAnswersText(m);
+      const text = askUserAnswersText(m, askedQuestions);
       if (text.trim()) userMsgs.unshift(`user: ${text}`);
     }
   }

@@ -209,8 +209,31 @@ test('ask_user_question error result is NOT intent (a cancel is not a grant)', (
   const out = renderUserIntent(messages, 10);
   assert.ok(!out.includes('answers'), 'errored ask_user_question must NOT be intent');
 });
-test('a tool-based grant changes the intent hash (invalidates stale DENY cache)', () => {
-  const before = [
+test('the intent window carries the QUESTION the answer belongs to (v0.15.1, live-found gap)', () => {
+  const messages = [
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'ask9', name: 'ask_user_question', arguments: { questions: [{ id: 'p', question: 'run the probe command?' }] } }] },
+    { role: 'user', source: { kind: 'tool' }, content: [{ type: 'tool-result', toolCallId: 'ask9', isError: false, content: [{ type: 'text', text: '{"answers":[{"id":"p","selected":["yes, go ahead"]}]}' }] }] },
+  ];
+  const out = renderUserIntent(messages, 10);
+  assert.ok(out.includes('yes, go ahead'), 'the answer is the intent');
+  assert.ok(
+    out.includes("[answering the agent's question:"),
+    'a terse answer is useless without the question it answers',
+  );
+  assert.ok(out.includes('run the probe command?'), 'the question text must be carried');
+  // Attribution is explicit: the quoted question is the agent's wording.
+  assert.ok(out.includes('"run the probe command?"'));
+});
+test('an answer whose question text is missing still renders as intent', () => {
+  const messages = [
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'askq', name: 'ask_user_question', arguments: '{}' }] },
+    { role: 'user', source: { kind: 'tool' }, content: [{ type: 'tool-result', toolCallId: 'askq', isError: false, content: [{ type: 'text', text: '{"answers":[{"id":"p","selected":["ok"]}]}' }] }] },
+  ];
+  const out = renderUserIntent(messages, 10);
+  assert.ok(out.includes('ok'), 'the answer alone stays intent');
+  assert.ok(!out.includes('answering'), 'no question recorded → no attribution suffix');
+});
+test('a tool-based grant changes the intent hash (invalidates stale DENY cache)', () => {  const before = [
     { role: 'user', source: { kind: 'tool' }, content: [{ type: 'tool-result', toolCallId: 'c-push', isError: false, content: [{ type: 'text', text: 'denied' }] }] },
   ];
   const after = [
