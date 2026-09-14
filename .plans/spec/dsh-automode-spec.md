@@ -127,6 +127,14 @@ src/
 - **安全边界**：deny 频带仍最先执行（`/etc`、`.ssh/`、`.env`、凭据库文件名、内联密钥材料、管道执行等仍硬拒）；删除类命令（`rm`）不在写命令白名单；allowPath 是用户显式声明的全信任目录，误放风险限于「把文件写进用户自己信任的目录」。**频带只扫「操作」**（v0.15.1，见「已知问题」）：散文承载型工具的参数散文不再当操作扫。
 - **allowPath ≠ 文件沙箱权限**（2026-09-01 文档化）：`config.allowPaths` 只免 auto-mode 评审，**不改变 DSH 文件沙箱**对 workspace 外路径的写权限——白名单路径写 workspace 外仍需 `sandbox_permissions: danger-full-access` 提权，而该提权对白名单路径经 approval 桥接**零评审自动放行**。
 
+#### Agent 可操作指引（2026-09-14）：写 allowPath 白名单内路径时主动带提权
+
+> ⚠️ **供主模型 agent 的常驻指令，须随 `index.js` 的 `systemPrompt.context` 注入**（与 `BREAKER_TRIPPED_HINT` 等运行时提示并列；`BREAKER_TRIPPED_HINT` 措辞需调整为「白名单路径提权零评审自动放行」，避免误导读作"会弹人工窗口"）。
+
+- **要点**：目标在 `config.allowPaths` 白名单内（如 `~/.agents`、`/tmp/`、已配置的 OneDrive/skills 目录），写 workspace 外该路径时，**首次尝试就带 `sandbox_permissions: danger-full-access` + 一句 justification**——auto-mode 会对白名单内提权**零评审自动放行**（`approval 桥接 → allowed-once`），**不会卡人工审批**。不要裸跑（不提质权会被文件沙箱拒）、也不要因怕"弹人工窗口"而回避提权。
+- **反模式（实测教训 2026-09-14，end-of-day）**：对 `~/.agents` 的 `git add/commit/push` 裸跑被文件沙箱拒，原因正是模型未带提权；而同命令带 `danger-full-access` + 理由后即 `allowed-once` 自动放行。模型需记住：**"需要写白名单外路径" ⟹ 直接提权，而非先试后升级**。
+- **安全边界不变**：deny 频带（`.ssh/`、`.env`、credentials、管道执行等）即使在白名单内仍硬拒；`reset --hard`/`clean`/`rebase`/`merge` 等改写型 git 命令不在快速路径；提权仅自动放行「所有目标都在 trust roots 内」的调用。
+
 #### 分类器 prompt 契约（v0.15.0，v0.15.1 收紧）
 
 判定契约写在 `prompt.ts` 的 `buildSystemPrompt()` 里。它是**结构化审查（stage 2）**的安全姿态单一真相；完整的安全姿态还包含 stage 1 预筛与确定性频带，二者各有自己的真相（见「两阶段分类器」与「已知问题」）。三条纪律：
