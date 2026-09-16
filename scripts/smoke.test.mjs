@@ -666,8 +666,8 @@ test('different target directories NEVER share, even with identical justificatio
   // 2026-09-12 probe: D (~/Documents) classified → E (~/Downloads, same
   // justification text, 9s later) hit the cache. After v0.14.1 the keys must
   // differ → E re-classifies.
-  const d = VerdictCache.sig('write', '缓存区分度测试甲', { file_path: '/Users/logan/Documents/_cache_d.txt' });
-  const e = VerdictCache.sig('write', '缓存区分度测试甲', { file_path: '/Users/logan/Downloads/_cache_e.txt' });
+  const d = VerdictCache.sig('write', '缓存区分度测试甲', { file_path: '/Users/example/Documents/_cache_d.txt' });
+  const e = VerdictCache.sig('write', '缓存区分度测试甲', { file_path: '/Users/example/Downloads/_cache_e.txt' });
   assert.notEqual(d, e);
   // …and the cache store itself respects it:
   const c = new VerdictCache();
@@ -1007,19 +1007,19 @@ test('cd is a tracked benign navigator (not an invalidator), plus git write-reso
   // git add/commit/push write into the repo's `.git`, so the allowPath-checkable
   // destination is the repository root resolved from the `cd` (or `-C`) context.
   assert.deepEqual(
-    bashWriteDestinations('cd /Users/logan/.agents && git add skills/a.md && git commit -m "m"'),
-    ['/Users/logan/.agents'],
+    bashWriteDestinations('cd /Users/example/.agents && git add skills/a.md && git commit -m "m"'),
+    ['/Users/example/.agents'],
   );
   assert.deepEqual(
-    bashWriteDestinations('cd /Users/logan/.agents && git add -A && git commit -q -m "x"'),
-    ['/Users/logan/.agents'],
+    bashWriteDestinations('cd /Users/example/.agents && git add -A && git commit -q -m "x"'),
+    ['/Users/example/.agents'],
   );
   assert.deepEqual(
-    bashWriteDestinations('cd /Users/logan/.agents && git push origin main 2>&1 | tail -3'),
-    ['/Users/logan/.agents'],
+    bashWriteDestinations('cd /Users/example/.agents && git push origin main 2>&1 | tail -3'),
+    ['/Users/example/.agents'],
   );
-  assert.deepEqual(bashWriteDestinations('git -C /Users/logan/.agents add .'), ['/Users/logan/.agents']);
-  assert.deepEqual(bashWriteDestinations('git add .', '/Users/logan/.agents'), ['/Users/logan/.agents']);
+  assert.deepEqual(bashWriteDestinations('git -C /Users/example/.agents add .'), ['/Users/example/.agents']);
+  assert.deepEqual(bashWriteDestinations('git add .', '/Users/example/.agents'), ['/Users/example/.agents']);
   // `-C ~/…` normalizes `~` to the absolute repo root (HOME expansion).
   assert.deepEqual(
     bashWriteDestinations('git -C ~/.agents add .'),
@@ -1027,8 +1027,8 @@ test('cd is a tracked benign navigator (not an invalidator), plus git write-reso
   );
   // history-rewrite / deletion git commands are NOT allowPath-trusted.
   assert.deepEqual(bashWriteDestinations('git reset --hard HEAD'), []);
-  assert.deepEqual(bashWriteDestinations('cd /Users/logan/.agents && git clean -f'), []);
-  assert.deepEqual(bashWriteDestinations('cd /Users/logan/.agents && rm -rf x'), []);
+  assert.deepEqual(bashWriteDestinations('cd /Users/example/.agents && git clean -f'), []);
+  assert.deepEqual(bashWriteDestinations('cd /Users/example/.agents && rm -rf x'), []);
 });
 test('redirection in any segment invalidates the composite fast path', () => {
   assert.deepEqual(bashWriteDestinations('cp a /tmp/b && echo hi >> /tmp/log'), []);
