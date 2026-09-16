@@ -123,13 +123,18 @@ src/
 - `config.allowPaths` 即**全信任**：其中文件工具（`targetPaths`）与 bash 写命令（`bashWriteDestinations` 提取的目标）经真实 symlink-resolve 前缀匹配命中 → 跳过分类器（`curated allowPath`）。
 - **bash 写命令覆盖**（2026-08-29）：`cp/mv/rsync/ditto/install/tar -x(-C)/unzip(-d)/unar(-d)/curl -o/wget -O/git clone` 等非复合写命令提取目标目录/文件路径。
 - **复合命令覆盖**（2026-09-01）：`splitShellSegments`（顶层 `&&`/`||`/`;`/`|`/`&`/换行 分段，引号+括号感知）+ `expandShellVars`（`VAR=...` 赋值跟踪、`$VAR`/`${VAR}` 展开）逐段提取写目标。**守卫**：任一段不是「已识别写命令 / 纯赋值 / 良性工具命令」或含顶层重定向 `>`/`>>` → 整体回退分类器；副作用命令（kill/pkill/rm/sh/bash/网络/守护进程管理…）与**命令/进程替换**（`` `…` ``、`$(…)`、`<(…)`，含引号内形式）出现即回退——防「`curl -o /tmp/e && bash /tmp/e`」类下载执行模式被 allowPath 放行。
+- **`mkdir` 是写命令，不搭良性便车**（v0.15.3，独立 review 检出的既有漏洞）：`mkdir` 曾列在「良性工具」集合里，于是 `git -C <白名单仓库> commit … && mkdir -p /anywhere` 只交出了仓库根这一个目标、通过 `every(...)` 信任证明，**整条调用可被桥接为 `danger-full-access`（零评审）**，而 mkdir 实际写到了所有信任根之外。现 `mkdir` 移入写命令表，其**全部位置参数**（`-m/--mode`、`-Z/--context` 的取值除外）都是写目标，须全部落在信任根内；纯只读工具（echo/ls/cat/head…）仍可搭车。**残留（见「已知问题」）**：识别得出但**取不到目标**的写命令段（如无 `-o` 的 `curl`、无 `-C` 的 `tar`）在复合命令里仍是「搭车」状态，未纳入本次收敛。
+- **复合目标的相对路径按「段的当时 cwd」解析为绝对路径**（v0.15.3，独立复核时实测出的**既有**信任证明失真）：此前相对目标原样返回，由 allowPath 校验按**会话 cwd** 解析 —— `cd /tmp/outside && cp a workspace/evil` 证明的是 `/workspace/workspace/evil`（在信任根内），实际写的是 `/tmp/outside/workspace/evil`（信任根外），带提权时整条调用被桥接为 `danger-full-access` 零评审放行。现 `collectSegmentDestinations` 对每段用 `resolve(cwd.value, dest)` 归一（`cd` 已被跟踪）→ 证明与真实写入点一致。**方向是「证明更准」**：`cd` 进信任根内的相对写入仍快速放行，`cd` 到根外的相对写入回退分类器；无 `cd` 的调用语义不变（当时的 cwd 即会话 cwd）。
+- **展开后仍含 `$` 的「目标或命令名」一律拒绝**（v0.15.3，独立 review 检出的既有同类盲点）：`expandShellVars` 只解析**命令内赋值**与 `$HOME`，其余（`$TMPDIR`、`$PWD`、`$XDG_*`…）保持字面量；而字面量 token 词法上必然落在**恒为信任根的会话 cwd** 之下 → 证明通过、真实写点却在别处（`git … commit && cp a "$TMPDIR/y"` 实测过证）。现 `collectSegmentDestinations` 对任何归一后仍含 `$` 的**目标** `return false`（整条调用回退分类器）——兑现 `expandShellVars` 处「未知变量最终 fail-closed」的既有注释。**命令名同样受检**（第三轮 review 的兄弟洞）：`cp a /allowed && "$EVIL"/echo hi` 会把 base token `$EVIL/echo` 按末段名匹配成良性 `echo`、不产出目标而**搭车**，整条被桥接后即执行任意二进制。**带路径前缀的 token 不得冒充良性工具**（第四轮 review 的更深一层）：良性搭车现要求 `first === base`（无路径成分）——`./echo hi`、以及经同命令赋值解析后的 `E=evil; "$E"/echo hi` 都回退分类器；**写命令**仍按末段名匹配（`~/bin/trash` 这类受支持的包装脚本形态不受影响，其目的地本就被证明）。**边界**：单命令与复合命令同一处理；`$HOME` 与命令内 `$VAR` 赋值不受影响；文件名里**字面** `$` 也一并 fail-closed（刻意方向）。
 - **git 写命令覆盖**（2026-09-04）：`git add/commit/push` 返回其**仓库根**（`-C` 解析、否则取有效 cwd，`cd <dir>` 是受跟踪的良性导航命令）→ 仓库根 in allowPath → 信任。`reset --hard`/`clean`/`rebase`/`merge` 等改写型命令**刻意不含**（留在分类器/硬拒带）；fd-dup 重定向（`2>&1`）不是文件写，不使快速路径失效。
 - **安全边界**：deny 频带仍最先执行（`/etc`、`.ssh/`、`.env`、凭据库文件名、内联密钥材料、管道执行等仍硬拒）；删除类命令（`rm`）不在写命令白名单；allowPath 是用户显式声明的全信任目录，误放风险限于「把文件写进用户自己信任的目录」。**频带只扫「操作」**（v0.15.1，见「已知问题」）：散文承载型工具的参数散文不再当操作扫。
 - **allowPath ≠ 文件沙箱权限**（2026-09-01 文档化）：`config.allowPaths` 只免 auto-mode 评审，**不改变 DSH 文件沙箱**对 workspace 外路径的写权限——白名单路径写 workspace 外仍需 `sandbox_permissions: danger-full-access` 提权，而该提权对白名单路径经 approval 桥接**零评审自动放行**。
 
 #### Agent 可操作指引（2026-09-14）：写 allowPath 白名单内路径时主动带提权
 
-> ⚠️ **供主模型 agent 的常驻指令，须随 `index.js` 的 `systemPrompt.context` 注入**（与 `BREAKER_TRIPPED_HINT` 等运行时提示并列；`BREAKER_TRIPPED_HINT` 措辞需调整为「白名单路径提权零评审自动放行」，避免误导读作"会弹人工窗口"）。
+> ⚠️ **供主模型 agent 的常驻指令（v0.15.3 落地）**：随 `index.js` 的 **`auto-mode:allowlist`** system-prompt context（order 116）注入——**复用既有段落、不新开 context**：它本来就只在 auto-mode 会话渲染（`isAuto` 门控），内容同属 allowPaths 主题。`BREAKER_TRIPPED_HINT` 措辞同步调整。
+>
+> **修正（v0.15.3，逐条核对决策链后）**：原文要求把 `BREAKER_TRIPPED_HINT` 改成「白名单路径提权零评审自动放行」以消除「会弹人工窗口」的误读。核对后确认**不能整句替换**：熔断器跳闸时 pre-execute 门**刻意跳过 allowPath 分支**（`pre-execute.ts` 的 `!breaker.isTripped(sid)` 条件）、不记录桥接，因此**跳闸期间**的提权确实走人工——原措辞在该状态下准确。真正的误读在于**未限定状态**（读作「提权永远要人工」），故改为限定式：人工介入是**因为 auto 已暂停**；正常状态下白名单内提权**零评审自动放行**，模型不应因此回避提权。
 
 - **要点**：目标在 `config.allowPaths` 白名单内（如 `~/.agents`、`/tmp/`、已配置的 OneDrive/skills 目录），写 workspace 外该路径时，**首次尝试就带 `sandbox_permissions: danger-full-access` + 一句 justification**——auto-mode 会对白名单内提权**零评审自动放行**（`approval 桥接 → allowed-once`），**不会卡人工审批**。不要裸跑（不提质权会被文件沙箱拒）、也不要因怕"弹人工窗口"而回避提权。
 - **反模式（实测教训 2026-09-14，end-of-day）**：对 `~/.agents` 的 `git add/commit/push` 裸跑被文件沙箱拒，原因正是模型未带提权；而同命令带 `danger-full-access` + 理由后即 `allowed-once` 自动放行。模型需记住：**"需要写白名单外路径" ⟹ 直接提权，而非先试后升级**。
@@ -361,6 +366,23 @@ src/
   - v0.15.1 起改为：负向断言用正则（`/(?:shared[^\n]{0,5}production[^\n]{0,5}external)/`）而非字面串，
     并新增**行为型**断言（预筛输入必须含命令原文）——行为断言才是能真正锁住 S1 的那类。
 
+- **已登记待评估的既有取舍**（2026-09-12 review 轻12；**v0.15.3 回填**——此前只写在 v0.14.4 的历史条目里、本节缺失，属「spec 虚记」）：
+  - **gate 不执行 deletionGuard**：`deletionGuard` 档在 `classifyBand`（`bands.ts`：永久删除 → 提示改用 `trash`），而 pre-execute 门走 `scanDenyBand`（v0.15.1 收敛后的单一扫描），不跑 `matchDeletion` → 该档实际上只对 approval 路径生效；非提权 bash 调用本就不进分类器（见上一条覆盖面取舍），所以这一类无兜底。
+  - **approval 桥接按裸 `callId` 索引、无会话隔离**：`bridge.record(callId, …)` / `take(callId, toolName)` 不带 sessionId——跨会话同名 callId 理论可命中（TTL 60s + 消费即删 + toolName 校验使其实际很难发生，但隔离性弱于其它缓存）。
+  - **`ls*` 等宽 glob**：`DEFAULT_ALLOW` 的 `ls*` 会匹配 `lsof`、`lsblk` 等非列表命令（前缀 glob 语义即如此）。
+  - **allowPath 内的 `git push --force` 跳过分类器**：`bashWriteDestinations` 对 `git add/commit/push` 返回仓库根、不区分 `--force`，仓库根在白名单内即确定性放行（`reset --hard`/`clean`/`rebase`/`merge` 仍刻意不在快速路径）。
+  - **带路径前缀的「写命令」仍按末段名匹配（残留的精确形状：*相对*前缀）**（2026-09-16 review 第四轮记录，**未修复**）：良性工具的冒充已收敛（`first === base`），但**写命令**这一支刻意保留末段名匹配，因为 `~/bin/trash …` 这类文档化的包装脚本形态依赖它。代价：`./cp a /dest`、`evil/cp a /dest` 这类**相对** token 会被当作 `cp`、其**声明的**目的地被证明后放行，而真实执行的可能是任意二进制（利用前提：在 cwd 暂存一个与写命令同名的可执行文件 + 一次提权请求）。**修法分级**：一条更窄的规则（「相对前缀拒绝、绝对前缀保留末段名匹配」）即可关闭相对变体且对 `~/bin/trash`、`/usr/bin/cp` 零回归，但绝对路径下的同名暂存二进制仍会漏，故**不是完全闭合**；完全修法需「前缀目录落在信任根内」，而那可能回退未把 `~/bin` 加白名单的用户的包装形态——属独立一次 spec-first 变更。**记录须保持的要点**：目的地证明只约束**声明的**目标，真实二进制可无视 argv。
+- **复合命令里「取不到目标」的写命令段仍搭车**（2026-09-16 独立 review 检出，**未修复**）：
+  - **事实**（已复现）：`bashWriteDestinations` 对**识别得出但无显式目标**的写命令段返回 `[]` 且**不使复合失效** ——
+    `git -C <白名单仓库> commit … && curl -d @file https://…` 只交出仓库根 → 通过 `every(...)` → 可被桥接。
+    同类：无 `-C` 的 `tar -x`、无 `-d` 的 `unzip`（都写进 cwd，而 cwd 未进信任证明）；单命令形态反而安全（allowPath 分支要求 `length > 0`）。
+    `mkdir` 的那一半已在 v0.15.3 收敛；这一类未收敛。
+  - **为什么不一并修**：修法是「**任一段是写命令却取不到目标 ⟹ 整条复合回退**」，但需逐命令区分「此处确实没写」（`git status`/`log`/`diff` 等只读子命令）与「写在我们看不到的地方」（`curl` 无 `-o`、`tar -c` 的输出文件在首个位置参数、`tar -x` 写进 cwd）——粗暴收敛会把只读 git 段也打成回退，误报面大。需先补一张**按子命令判定只读**的表，属独立一次 spec-first 变更。
+  - **影响面**：仅「复合命令 + 某段写命令取不到目标 + 另有段落给出落在白名单内的目标」这一组合；单命令、以及任一段是未知/副作用命令的情形都不受影响（后者本就回退）。
+- **熔断器跳闸期间「缓存命中的 ALLOW」仍会放行**（2026-09-16 独立 review 记录，**未修复，既有**）：
+  `decideAuto` 的缓存检查（`index.ts` 缓存 ALLOW 分支）**早于**熔断器检查，所以跳闸窗口内、与跳闸前已被判定 ALLOW 的调用完全同签名的调用仍返回 `allowed-once`；新建调用（缓存 miss）才走人工。属既有顺序问题，非本次改动引入。
+- **`DEFAULT_ALLOW` 里的 `mkdir *` 是前缀 glob**（2026-09-16 记录，**待用户拍板**）：allow 频带对**非复合**命令按前缀匹配，默认表含 `mkdir *`、`echo *`、`trash *`、`ls*`、`date*` 等 —— 即这些前缀的单命令**不经 allowPath 也不经分类器**（deny 频带仍最先跑）。改默认表属「参数/行为默认值」变更，需用户确认后再动。
+
 ## 项目治理规范（对齐行业惯例，2026-09-12）
 
 **Changelog（Keep a Changelog）**
@@ -396,6 +418,23 @@ src/
    教训：**能被测试卡住的，就不要靠记忆**；发布流程必须有一道「文档描述 == 当前行为」的机械关卡。
 
 ## 变更历史
+
+### v0.15.3（2026-09-16，已完成）
+
+- **常驻 agent 指引落地**（2026-09-14 设计，本次实现）：把「写白名单内路径时**首次尝试就带提权**」写进 `auto-mode:allowlist` system-prompt 段落（复用既有 context，不新开），并显式写明三件事：① 白名单内提权**零评审自动放行**（`approval 桥接 → allowed-once`），不会等人工；② **不要裸跑**再等沙箱拒绝后升级；③ **不要因为怕弹窗而回避提权**（信任目标根本没有弹窗）。改动前该知识只在 README 里，模型要靠撞沙箱错误才学到（2026-09-14 end-of-day 实测反模式）。
+- **`BREAKER_TRIPPED_HINT` 措辞修正**：原句「a human will be asked to approve it」未限定状态，会被读成「提权永远要人工」。核对决策链后确认**跳闸期间的提权确实走人工**（门在 `!breaker.isTripped` 才进 allowPath 分支、不记桥接），故不整句替换，改为限定式：人工介入**是因为 auto 已暂停**，正常状态下白名单内提权零评审自动放行。详见「关键行为 → Agent 可操作指引」的修正说明。
+- **采纳独立 review 的【中等】发现，收敛一处既有信任漏洞**：`mkdir` 从「良性工具」移入**写命令表**，其全部位置参数都是写目标（`-m/--mode` 的取值除外；`-Z/--context` 按 GNU 语义**不**接独立取值，见本条后段）——修复「`git -C <白名单仓库> commit … && mkdir -p /anywhere` 只交仓库根即通过信任证明、进而被桥接为 `danger-full-access`」的绕过路径。**复核**：改后同一命令交出 `[仓库根, /anywhere]` → `every(...)` 不成立 → 不进 allowPath 分支、不记桥接、不写 `curated allowPath`，落到分类器（复现脚本实测），而全部目标在白名单内的对照组行为不变。属**收紧**（误放→评审），不改任何判定契约。
+- **第二轮复核时自查出并修复第二处同类漏洞（信任证明失真）**：复合命令的**相对目标**此前原样返回，由 allowPath 校验按会话 cwd 解析 —— `cd /tmp/outside && cp a workspace/evil`（带提权）实测被桥接为 `danger-full-access`、`curated allowPath` + `approval-bridge` 全绿，而真实写入点在信任根外。现 `collectSegmentDestinations` 逐段 `resolve(cwd.value, dest)` 归一为绝对路径，证明与真实写入点一致。**复核**：同一用例改后交出 `/tmp/outside/workspace/evil` → 证明不成立 → 无桥接、走分类器；`cd` 进信任根内的相对写入与无 `cd` 调用行为不变（对照组实测）。属**证明修正**（既收错放、也允许正确的放行），并顺带统一了 `bashWriteDestinations` 的契约：**返回的永远是绝对路径**。
+- **第二轮独立复核（同一改动）又收敛两处**：① **未解析 `$VAR` 目标虚假过证**（review 检出的**既有**同类盲点）——`expandShellVars` 之外的变量保持字面量，字面量词法上落在恒为信任根的会话 cwd 下，于是 `git … commit && cp a "$TMPDIR/y"` 通过证明、真实写点在根外；现归一后仍含 `$` 的目标 `return false`，整条调用回退分类器（兑现既有注释里的 fail-closed 承诺；`$HOME` 与命令内赋值不受影响）。② **`mkdir` 解析两处小瑕疵**——`-Z/--context` 被误当「取值选项」（GNU 实为无值旗标，`--context=CTX` 才是取值形式）会漏掉一个真实目标；`--` 之后的旗标形操作数被丢弃。现只对 `-m/--mode` 跳值，并支持 `--` 结束选项。两处均补了断言。
+- **第三轮复核（同一改动）补最后一处兄弟洞**：`$VAR` 守卫只查**目标**、不查**命令名** —— `cp a /allowed && "$EVIL"/echo hi` 的 base token `$EVIL/echo` 按末段名匹配成良性 `echo`、不产出目标而搭车，整条被桥接后即执行任意二进制（review 实测）。现命令名展开后仍含 `$` 同样 `return false`；正对照 `$HOME/bin/cp a /dest` 仍正常（`$HOME` 会展开）。smoke 111 项全过。
+- **第四轮复核（同一改动）再补一处同族洞**：**带路径前缀的 token 冒充良性工具** —— `./echo hi`（以及经同命令赋值解析后的 `E=evil; "$E"/echo hi`）按末段名匹配成良性 `echo`、不产出目标而搭车，整条被桥接后执行任意二进制。现良性搭车要求 `first === base`（无路径成分）；写命令保留末段名匹配以免回退文档化的 `~/bin/trash` 形态，其残留已登记（见「已知问题」）。正对照实测：`~/bin/trash ~/.agents/x && cp a /dest` → `[~/.agents/x, /dest]`、`/usr/bin/cp a /dest` → `[/dest]`、`cp a /dest && ls -la` → `[/dest]`。smoke 112 项全过。
+- **review 其余处置**：①【中等】「it will not wait for a human」无条件 → **采纳**，补充熔断暂停与「闸门解析不出目标时走评审」两个限定；②【轻微】「a bash write」措辞过宽 → 由同一限定覆盖；③【轻微】结构断言只读 `src/` → **采纳**，同一 400 字符窗口断言同时覆盖 `lib/index.js`（真正运行的产物）；④【轻微】熔断器提示「this and later approvals go to a human」与「缓存命中 ALLOW 先于熔断检查」的既有例外 → **登记**（见「已知问题」）。
+- **机械守卫**：新增 **8 项 smoke 测试**——指引句必须含「FIRST attempt」/`danger-full-access`/「auto-approved with no review」/反裸跑/反回避提权；结构断言 `auto-mode:allowlist` context 必须发射该句且受 `isAuto` 门控（**src + lib 双查**）；`BREAKER_TRIPPED_HINT` 必须把人工归因于暂停、且**不得**再出现被退役的无条件措辞；`mkdir` 目标必须进入复合命令的目标集（含 `-m` 取值不误判为路径、`-Z` 不误吞目标、`--` 结束选项）；相对目标必须按**当时 cwd** 归一（`cd` 到根外 / 根内 / 无 `cd` 三态）；未解析 `$VAR` 的**目标与命令名**必须整条拒绝，且**带路径前缀的 token 不得冒充良性工具**（并断言 `$HOME/bin/cp`、`~/bin/trash`、`/usr/bin/cp`、裸 `ls` 四个正对照仍成立）。**112 项 smoke 全过**（原 104 项 + 新 8 项）。
+- **顺手修正**：① 把 v0.14.4 review「轻12」登记的**四条既有取舍**（gate 不跑 deletionGuard、桥接按裸 callId 无会话隔离、`ls*` 宽 glob、allowPath 内 `git push --force`）从历史条目**回填进「已知问题」**——原文称「已记入已知问题」而该节缺失，属 spec 虚记（四条均逐条核验源码后写入）；② 中性化一处历史条目里的**本地路由别名**（隐私门禁）；③ release workflow 注释不再写死会过期的 smoke 条数；④ **复活 `scripts/compose-entries.test.mjs`**（自 v0.4.1 起静默失效：写死某台机器的 Windows npx 缓存路径 + 断言过期的 entry 名 `dsh-auto-mode`）——锚点改为**发现式**（env → `~/.dsh/profiles/*/node_modules` → `npm root -g`，找不到则 SKIP 给出指引），entry 名对齐 `@log.li/dsh-automode`，挂为 `npm run test:compose`（opt-in：需本地 DSH 安装，`dsh-app-boot` 不在公共 registry）。**实测**：web profile 组装出 `id=auto-mode name=@log.li/dsh-automode`，预设断言（`approval=ask` + `sandbox=workspace-write`）通过。
+
+### v0.15.2（2026-09-12，仅文档）
+
+- 无设计/行为变更：把 0.15.1 随包发出的**过期政策表述**（README 中英、CHANGELOG）改为当前契约（授权而非「值不值得」、硬底线、double-check 闭环），并加机械守卫断言文档与行为一致。设计真相见 v0.15.1 条目。
 
 ### v0.15.1（2026-09-12，已完成）
 
@@ -509,7 +548,7 @@ src/
   - `pre-execute-deny` 事件补命令上下文：bash 带 `cmdHead`、文件工具带 `targets`（原只有匹配的 deny pattern，无法事后判断 `credentials`×18、`.env`×7 等命中是否为误伤）。
   - `decision` 事件带 `callId`（原无，矛盾的两次裁决只能靠时间窗近似 join）。
   - **in-tree 提权事件语义修正**：pre-execute 的 `trustRoots` 把 session cwd 并入 roots（`pre-execute.ts:70`），导致「工作区内 + 带 `sandbox_permissions`」的文件操作也命中 allowPath 分支，事件却记为 `curated allowPath`——审计会误读为「config.allowPaths 命中」。改为区分 `curated allowPath`（命中 `config.allowPaths`）与 `workspace in-tree escalation (session cwd in trust roots)`；行为不变（均确定性放行 + 桥接）。
-- **分类器不可用提示分类（C）**：复盘发现 10 次 `classifier-fail` 全为外部/配置问题——429 配额（ocg 路由）与 `UNSUPPORTED_REASONING_EFFORT`（ollama 路由 4 次）。后者根因在 dsh-llm adapter：不传 effort 时仍校验模型元数据默认值（`dsh-session-persistence-jsonl/worker.cjs:4849-4853`），ollama 模型元数据缺失 → 回退重试也失败——**非插件回退逻辑 bug**，属部署配置。实现：`classifier.ts` 导出 `classifyFailureCategory`（`config:no-route` / `config:unsupported-effort` / `transient:{timeout,rate-limit,overload,server,connection}` / `unknown`），index.ts 与 pre-execute.ts 的 `classifierUnavailableText` 共用：配置性问题给出「修复 provider/model 或换路由，重试无用」指引，取代误导性的「temporarily unavailable」；`no classifier route` 也从通用文案细化为配置指引。
+- **分类器不可用提示分类（C）**：复盘发现 10 次 `classifier-fail` 全为外部/配置问题——429 配额（一条路由）与 `UNSUPPORTED_REASONING_EFFORT`（另一条路由、4 次）。后者根因在 dsh-llm adapter：不传 effort 时仍校验模型元数据默认值（`dsh-session-persistence-jsonl/worker.cjs:4849-4853`），该模型的元数据缺 efforts 列表 → 回退重试也失败——**非插件回退逻辑 bug**，属部署配置。实现：`classifier.ts` 导出 `classifyFailureCategory`（`config:no-route` / `config:unsupported-effort` / `transient:{timeout,rate-limit,overload,server,connection}` / `unknown`），index.ts 与 pre-execute.ts 的 `classifierUnavailableText` 共用：配置性问题给出「修复 provider/model 或换路由，重试无用」指引，取代误导性的「temporarily unavailable」；`no classifier route` 也从通用文案细化为配置指引。
 - **复现记录：B 候选否决（性能优化不成立）**。复盘初判「edit 承担 86% 分类器调用（2746/3224）」经复现修正：`pre-execute-allow` 细分实为 in-tree 快捷 2328 / 缓存 ALLOW 415 / **真分类器 350** / allow 频带 70 / allowPath 66。in-tree 提权调用实际已被「roots 含 cwd」的 allowPath 分支**确定性放行**（复现：同目标 edit 带/不带 `sandbox_permissions` 均零 LLM 放行），并非进了分类器；真分类器 350 次/20 天的 edit（217 条）全是 `~/.agents` 等 out-of-tree 正常审核（allowPaths 配置 08-31 后才覆盖）。→ **无性能优化空间，不做决策链变更**；本版改进收敛到审计（A/E）与提示（C）。
 - 测试：70 项 smoke 全过（新增 3：矛盾对检测 ×2、classifyFailureCategory 分类 ×1）+ bridge flow 4 断言；README(en/zh) 日志段（callId / deny 上下文 / audit 脚本）与 allowPaths 语义段同步；`auto-mode-review.mjs` 死引用（README 遗留，脚本早已不存在）替换为 `scripts/audit.mjs`。
 

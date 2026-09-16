@@ -30,6 +30,13 @@ export declare function isInsideTrusted(p: string, roots: string[], base?: strin
  * "try at current level → hit a denied error → then escalate" round-trip
  * and instead requests the sandbox escalation directly, surfacing the human
  * approval window immediately.
+ *
+ * v0.15.3: the hint also scopes "a human decides" to the paused state. While the
+ * breaker is tripped the gate deliberately skips the allowPath branch (and so
+ * records no approval bridge), which is why escalation really does reach a human
+ * here — but the old wording ("a human will be asked to approve it") read as if
+ * escalation *always* queues for a human, which is false for allowlisted targets
+ * in normal operation and pushes the model to avoid escalating at all.
  */
 export declare const BREAKER_TRIPPED_HINT: string;
 export interface PreExecuteResult {

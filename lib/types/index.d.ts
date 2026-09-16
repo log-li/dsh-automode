@@ -19,6 +19,15 @@ import { Config } from './config.js';
 export declare const name = "dsh-automode";
 export { Config };
 export declare const inject: string[];
+/**
+ * v0.15.3 (spec 2026-09-14): the standing agent guidance. The escalation half is
+ * the lesson from a live end-of-day session — the model bare-ran a `git` write to
+ * an allowlisted directory outside the workspace (`~/.agents`), the file sandbox
+ * rejected it, and only the escalated retry was auto-granted. The instruction to
+ * escalate on the FIRST attempt now lives in the standing prompt instead of only
+ * in the README, so the model does not have to learn it by hitting the error.
+ */
+export declare const ALLOWLIST_SENTENCE: string;
 export declare function isAuto(ctx: Context, session: Session): boolean;
 /** v0.14.3: probe a (possibly removed) void setter off a namespace module. */
 export declare function probeSetter(module: unknown, name: string): ((...args: unknown[]) => void) | undefined;

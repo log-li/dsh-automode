@@ -11,13 +11,13 @@ import { join } from 'node:path';
 import { findAllowRule, findDenyRule, isAllowlisted, patternMatches } from '../lib/rules.js';
 import { parseVerdict, renderTranscript, renderUserIntent, restoreToolCallArgs, actionSummaryOf, parseFastFilterDigit } from '../lib/classifier.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from '../lib/prompt.js';
-import { isAuto, writeAutoMode } from '../lib/index.js';
+import { isAuto, writeAutoMode, ALLOWLIST_SENTENCE } from '../lib/index.js';
 import { Breaker } from '../lib/breaker.js';
 import { VerdictCache, hashString } from '../lib/cache.js';
 import { AllowPathBridge } from '../lib/bridge.js';
 import { tokenizeShell, bashWriteDestinations, denyHaystackFor, isFileTool, collectPaths, classifyBand, compileRegex, compileGlob, proseSafeDenyPatterns, isProseCarrier, SUBJECT_ONLY_DENY_SOURCES, scanDenyBand, looksMachineLeaving } from '../lib/bands.js';
 import { DEFAULT_DENY } from '../lib/config.js';
-import { isInsideTrusted } from '../lib/pre-execute.js';
+import { isInsideTrusted, BREAKER_TRIPPED_HINT } from '../lib/pre-execute.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -232,6 +232,37 @@ test('README describes the CURRENT policy and carries none of the superseded wor
   for (const phrase of ['stays forbidden', 'still never granted on the strength of the request', '仍然不能仅凭用户请求获得许可']) {
     assert.ok(!section.includes(phrase), `CHANGELOG [${pkg.version}] still says "${phrase}"`);
   }
+});
+console.log('standing agent guidance (v0.15.3, spec 2026-09-14)');
+test('the allowlist section tells the model to escalate on the FIRST attempt', () => {
+  assert.match(ALLOWLIST_SENTENCE, /FIRST attempt/);
+  assert.match(ALLOWLIST_SENTENCE, /danger-full-access/);
+  assert.match(ALLOWLIST_SENTENCE, /auto-approved with no review/);
+  assert.ok(/do not run it bare/i.test(ALLOWLIST_SENTENCE), 'must warn against the bare-then-escalate round-trip');
+  assert.ok(/never skip the escalation/i.test(ALLOWLIST_SENTENCE), 'fear of a prompt must not suppress escalation');
+  assert.match(ALLOWLIST_SENTENCE, /Only edit the allowlist config after the user explicitly asks/);
+});
+test('the allowlist section is actually injected into auto-mode sessions', () => {
+  // Pin the wiring in BOTH the source and the compiled artifact that actually
+  // runs (review finding: an assertion that only read src/ stayed green when
+  // lib/ was not rebuilt).
+  for (const rel of ['../src/index.ts', '../lib/index.js']) {
+    const text = readFileSync(new URL(rel, import.meta.url), 'utf8');
+    const start = text.indexOf("name: 'auto-mode:allowlist'");
+    assert.ok(start >= 0, `${rel}: the auto-mode:allowlist system-prompt context must exist`);
+    const block = text.slice(start, start + 400);
+    assert.match(block, /ALLOWLIST_SENTENCE/, `${rel}: the context must emit the guidance sentence`);
+    assert.match(block, /isAuto\(/, `${rel}: the guidance must be scoped to auto-mode sessions`);
+  }
+});
+test('the breaker hint scopes "a human decides" to the paused breaker (v0.15.3)', () => {
+  assert.match(BREAKER_TRIPPED_HINT, /because auto mode is paused/i);
+  assert.match(BREAKER_TRIPPED_HINT, /zero review/);
+  assert.match(BREAKER_TRIPPED_HINT, /DIRECTLY on your first attempt/);
+  assert.ok(
+    !/a human will be asked to approve it/.test(BREAKER_TRIPPED_HINT),
+    'retired wording — it read as "escalation always needs a human"',
+  );
 });
 test('provenance: injections never authorize, a missing source stays a compat fallback', () => {
   const mk = (source, text) => ({ role: 'user', ...(source ? { source } : {}), content: [{ type: 'text', text }] });
@@ -856,7 +887,10 @@ test('v0.13.0: recoverable `trash` targets ARE extracted for allowPath', () => {
   // targets are extracted so the allowPath gate requires ALL of them inside the
   // trusted roots (system paths stay hard-denied; rm/shred stay unextracted).
   assert.deepEqual(bashWriteDestinations('trash /Users/x/OneDrive/Proposal/f'), ['/Users/x/OneDrive/Proposal/f']);
-  assert.deepEqual(bashWriteDestinations('trash f1 f2'), ['f1', 'f2']);
+  // v0.15.3: destinations are resolved against the command's effective cwd, so
+  // even a relative target comes back absolute (the allowPath proof must not
+  // depend on where the *session* happens to sit).
+  assert.deepEqual(bashWriteDestinations('trash f1 f2', '/base'), ['/base/f1', '/base/f2']);
   assert.deepEqual(bashWriteDestinations('trash -f /Users/x/OneDrive/Proposal/f'), ['/Users/x/OneDrive/Proposal/f']);
 });
 test('v0.13.0: `~` tilde expansion on write destinations (incl. wrapper scripts)', () => {
@@ -881,14 +915,84 @@ console.log('bands.js (bashWriteDestinations — composite support, spec 2026-09
 test('temp→swap composite export dance yields the real destinations ($VAR expansion)', () => {
   const dests = bashWriteDestinations(
     'DIR="/Users/x/OneDrive/Proposal"; cp a b_temp && (trash b; true) && mv b_temp "$DIR/b" && ls',
+    '/base',
   );
-  assert.ok(dests.includes('b_temp'), `dests=${JSON.stringify(dests)}`);
+  assert.ok(dests.includes('/base/b_temp'), `dests=${JSON.stringify(dests)}`);
   assert.ok(dests.includes('/Users/x/OneDrive/Proposal/b'), `dests=${JSON.stringify(dests)}`);
+});
+test('v0.15.3 (review): relative destinations resolve against the EFFECTIVE cwd, not the session cwd', () => {
+  // The hole: `cd <untrusted> && cp a workspace/evil` handed back the raw
+  // relative target, which the allowPath proof resolved against the session cwd
+  // (a trust root) — proving the wrong file and bridging `danger-full-access`.
+  assert.deepEqual(
+    bashWriteDestinations('cd /tmp/outside && cp a workspace/evil', '/workspace'),
+    ['/tmp/outside/workspace/evil'],
+  );
+  // Without a `cd` the effective cwd IS the session cwd — unchanged semantics.
+  assert.deepEqual(bashWriteDestinations('cp a workspace/evil', '/workspace'), ['/workspace/workspace/evil']);
+  // A tracked `cd` into a trusted dir keeps the fast path meaningful.
+  assert.deepEqual(
+    bashWriteDestinations('cd /tmp/trusted && cp a sub/f', '/workspace'),
+    ['/tmp/trusted/sub/f'],
+  );
+});
+test('v0.15.3 (review): an UNRESOLVED $VAR destination refuses the whole call', () => {
+  // `$HOME` and in-command assignments expand; anything else stays literal — and
+  // a literal token lexically sits under the session cwd, which is always a
+  // trust root, so the proof used to pass while the shell expanded it elsewhere.
+  assert.deepEqual(bashWriteDestinations('git -C /tmp commit -m m && cp a "$TMPDIR/y"', '/base'), []);
+  assert.deepEqual(bashWriteDestinations('cp a "$TMPDIR/y"', '/base'), []);
+  assert.deepEqual(bashWriteDestinations('export D=/tmp/t; mkdir -p "$D/sub"', '/base'), ['/tmp/t/sub']);
+  assert.deepEqual(bashWriteDestinations('cp a "$HOME/x"', '/base'), [join(process.env.HOME, 'x')]);
+});
+test('v0.15.3 (review): an unresolved $ in the COMMAND NAME refuses the call too', () => {
+  // The destination-only guard left this sibling open: `"$EVIL"/echo` basenames
+  // to the benign `echo`, emits no destination, and rode along inside a composite
+  // that another segment had already proved.
+  assert.deepEqual(bashWriteDestinations('cp a /dest && "$EVIL"/echo hi', '/base'), []);
+  assert.deepEqual(bashWriteDestinations('"$EVIL"/cp a /dest', '/base'), []);
+  // A resolvable name still works: `$HOME/bin/cp` expands, so the basename is a
+  // recognized write command and its destination is proved normally.
+  assert.deepEqual(bashWriteDestinations('$HOME/bin/cp a /dest', '/base'), ['/dest']);
+});
+test('v0.15.3 (review): a path-prefixed token cannot impersonate a benign utility', () => {
+  // `./echo` (and `"$E"/echo` once the in-command assignment resolves the `$`)
+  // basename-matched `echo`, rode along with no destination, and would have run
+  // an arbitrary binary under the escalation another segment had proved.
+  assert.deepEqual(bashWriteDestinations('cp a /dest && ./echo hi', '/base'), []);
+  assert.deepEqual(bashWriteDestinations('E=evil; "$E"/echo hi && cp a /allowed', '/base'), []);
+  // Bare read-only utilities still ride, and the documented wrapper form
+  // (`~/bin/trash`) is a WRITE command — its destinations are still proved.
+  assert.deepEqual(bashWriteDestinations('cp a /dest && ls -la', '/base'), ['/dest']);
+  assert.deepEqual(
+    bashWriteDestinations('~/bin/trash ~/.agents/x && cp a /dest', '/base'),
+    [join(process.env.HOME, '.agents/x'), '/dest'],
+  );
 });
 test('composite with benign trailing segments still yields the write dest', () => {
   assert.deepEqual(bashWriteDestinations('cp a /dest && echo done'), ['/dest']);
   assert.deepEqual(bashWriteDestinations('cp a /dest; ls -la'), ['/dest']);
   assert.deepEqual(bashWriteDestinations('export D=/x; cp a "$D/f"'), ['/x/f']);
+});
+test('v0.15.3 (review): mkdir is a WRITE segment, not a benign rider', () => {
+  // The hole: `mkdir` sat in the benign-utility set, so a composite whose only
+  // extracted destination was a trusted repo root could still be bridged to
+  // `danger-full-access` while the mkdir wrote outside every trust root.
+  assert.deepEqual(
+    bashWriteDestinations('git -C /repo commit -m x && mkdir -p /anywhere'),
+    ['/repo', '/anywhere'],
+    'the mkdir target must join the destination set so the every() proof covers it',
+  );
+  assert.deepEqual(bashWriteDestinations('mkdir -p /dest/a /dest/b'), ['/dest/a', '/dest/b']);
+  assert.deepEqual(bashWriteDestinations('mkdir -m 755 /dest/a'), ['/dest/a'], 'the -m value is a mode, not a path');
+  assert.deepEqual(bashWriteDestinations('mkdir --mode=755 /dest/a'), ['/dest/a']);
+  // review nit: -Z/--context take NO separate value (GNU), and `--` ends options —
+  // the first cut skipped a real target in both shapes.
+  assert.deepEqual(bashWriteDestinations('mkdir -Z /evil /allowed'), ['/evil', '/allowed']);
+  assert.deepEqual(bashWriteDestinations('mkdir --context=ctx /dest/a'), ['/dest/a']);
+  assert.deepEqual(bashWriteDestinations('mkdir -- -p /dest'), [join(process.cwd(), '-p'), '/dest']);
+  assert.deepEqual(bashWriteDestinations('cp a /dest && mkdir -p /dest/sub'), ['/dest', '/dest/sub']);
+  assert.deepEqual(bashWriteDestinations('mkdir -p'), [], 'no target → no trust proof');
 });
 test('side-effect / interpreter / unknown commands invalidate the composite fast path', () => {
   assert.deepEqual(bashWriteDestinations('pkill -f node && cp a /tmp/b'), []);
@@ -945,7 +1049,14 @@ test('benign utilities ride along the composite fast path (documented semantics)
   // extracted too, so both the cp write-destination and the trash target must
   // be inside the trusted roots for the composite to take the allowPath path.
   assert.deepEqual(bashWriteDestinations('cp a /dest && trash /x/f'), ['/dest', '/x/f']);
-  assert.deepEqual(bashWriteDestinations('cp a /dest && mkdir -p /x'), ['/dest']);
+  // v0.15.3: `mkdir` left the ride-along set for the same reason — it creates
+  // directories, so its target joins the proof instead of riding along.
+  assert.deepEqual(bashWriteDestinations('cp a /dest && mkdir -p /x'), ['/dest', '/x']);
+  // Purely read-only utilities (no filesystem effect of their own) still ride along.
+  assert.deepEqual(
+    bashWriteDestinations('cp a /dest && echo done && ls /x && cat /etc/hosts'),
+    ['/dest'],
+  );
 });
 test('quoted separators inside filenames are not split points', () => {
   const dests = bashWriteDestinations('cp "a;b.txt" "/Users/x/OneDrive/Proposal/f;x.docx" && ls');

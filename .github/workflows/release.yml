@@ -29,10 +29,11 @@ jobs:
       # @deepseek-ai packages (e.g. dsh-sandbox-policy 0.1.x exists only
       # inside a DSH host; the public registry only has 0.0.x), so a standalone
       # CI cannot resolve/install them. Quality gate stays LOCAL: Spec-first
-      # implementation + typecheck/build + the smoke suite (`npm test`, 94 at
-      # v0.15.1) + opt-in real-model E2E (`npm run test:e2e`) + independent-model
-      # review, all before the release is triggered. The compiled lib/ ships in
-      # git, so publishing needs no CI build.
+      # implementation + typecheck/build + the smoke suite (`npm test`) + opt-in
+      # real-model E2E (`npm run test:e2e`) + independent-model
+      # review, all before the release is triggered. (The smoke suite grows every
+      # release — read the count from `npm test` instead of trusting a number in
+      # this comment.) The compiled lib/ ships in git, so publishing needs no CI build.
       - name: Verify release artifacts
         run: |
           test -f lib/index.js || { echo "lib/index.js missing — run npm run build before tagging"; exit 1; }

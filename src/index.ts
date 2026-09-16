@@ -83,7 +83,15 @@ const NEVER_SENTENCE =
   'Approval prompts are disabled in this session: actions that require ' +
   'approval are rejected automatically — do not request sandbox escalation.';
 
-const ALLOWLIST_SENTENCE =
+/**
+ * v0.15.3 (spec 2026-09-14): the standing agent guidance. The escalation half is
+ * the lesson from a live end-of-day session — the model bare-ran a `git` write to
+ * an allowlisted directory outside the workspace (`~/.agents`), the file sandbox
+ * rejected it, and only the escalated retry was auto-granted. The instruction to
+ * escalate on the FIRST attempt now lives in the standing prompt instead of only
+ * in the README, so the model does not have to learn it by hitting the error.
+ */
+export const ALLOWLIST_SENTENCE =
   'Auto-mode path allowlist: to trust a path the classifier rejects, add it to ' +
   '`config.allowPaths` on the `- id: auto-mode` row of `<profile>/cordis.patch.yml` ' +
   '(e.g. ~/.dsh/profiles/web/cordis.patch.yml). Keep the default `/tmp/` — the patch ' +
@@ -91,8 +99,16 @@ const ALLOWLIST_SENTENCE =
   'bash write-commands; deny patterns still run first. Note: the allowlist only skips ' +
   "this plugin's review — DSH's file sandbox still applies, so a write to an " +
   'allowlisted path OUTSIDE the workspace needs `sandbox_permissions: danger-full-access`; ' +
-  'for allowlisted paths that escalation is auto-approved with no review. Only edit after ' +
-  'the user explicitly asks; otherwise propose the change and wait.';
+  'for allowlisted paths that escalation is auto-approved with no review (the approval ' +
+  'bridge grants it deterministically). So when the target — a file tool, or a bash write ' +
+  'such as a git commit under an allowlisted repo root — is inside an allowlisted path ' +
+  'outside the workspace, request `sandbox_permissions: danger-full-access` WITH a one-line ' +
+  'justification on your FIRST attempt: it will not wait for a human (unless the circuit ' +
+  'breaker has paused auto mode — then a human decides; and if the gate cannot resolve where ' +
+  'a command writes, the call goes to review instead). Do not run it bare and ' +
+  'escalate only after the sandbox rejects it, and never skip the escalation for fear of a ' +
+  'prompt — for a trusted target there is none. Only edit the allowlist config after the ' +
+  'user explicitly asks; otherwise propose the change and wait.';
 
 // ---- Helpers ----
 

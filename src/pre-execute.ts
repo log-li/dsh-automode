@@ -106,10 +106,18 @@ function denialText(category: string, reason: string, modelExplanation?: string)
  * "try at current level → hit a denied error → then escalate" round-trip
  * and instead requests the sandbox escalation directly, surfacing the human
  * approval window immediately.
+ *
+ * v0.15.3: the hint also scopes "a human decides" to the paused state. While the
+ * breaker is tripped the gate deliberately skips the allowPath branch (and so
+ * records no approval bridge), which is why escalation really does reach a human
+ * here — but the old wording ("a human will be asked to approve it") read as if
+ * escalation *always* queues for a human, which is false for allowlisted targets
+ * in normal operation and pushes the model to avoid escalating at all.
  */
 export const BREAKER_TRIPPED_HINT =
   'Auto mode circuit breaker tripped: the safety classifier denied several actions in a row, so auto mode has paused and this and later approvals go to a human. ' +
-  'For any action that needs sandbox escalation (writing/editing outside the workspace, or commands needing more permission), request `danger-full-access` sandbox_permissions DIRECTLY on your first attempt — a human will be asked to approve it. ' +
+  'A human is asked because auto mode is paused — that is not what escalation normally does: for a target inside the configured allowlist, requesting escalation is auto-approved with zero review. ' +
+  'For any action that needs sandbox escalation (writing/editing outside the workspace, or commands needing more permission), request `danger-full-access` sandbox_permissions DIRECTLY on your first attempt. ' +
   'Do NOT first try at the current permission level, hit a "denied" error, and then escalate; that wastes a round-trip. Go straight to the escalation request.';
 
 /** CC errors-doc wording for transient classifier failures. */

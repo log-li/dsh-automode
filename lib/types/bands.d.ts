@@ -65,6 +65,11 @@ export declare function tokenizeShell(cmd: string): string[];
  * `cwd` is the working directory the command runs in (session cwd) — used to
  * resolve a bare `git add/commit/push` repository root and as the base for a
  * relative `cd`. Defaults to the host process cwd.
+ *
+ * **Every returned path is absolute** (v0.15.3): a relative destination is
+ * resolved against the cwd in effect at *that segment*, so a `cd` earlier in a
+ * composite is honoured by the allowPath proof instead of being silently
+ * evaluated against the session cwd (see `collectSegmentDestinations`).
  */
 export declare function bashWriteDestinations(cmd: string, cwd?: string): string[];
 /** Whether `text` contains a permanent-deletion command. */

@@ -13,7 +13,7 @@
  * Ported from dsh-auto-mode v0.4.1 lib/index.js (decideRoute + helpers).
  */
 
-import { resolve } from 'node:path';
+import { resolve, isAbsolute } from 'node:path';
 
 /** Expand `~` and `${HOME}`/`$HOME` at the front of a path (for `cd ~` and `git -C ~`).
  * Left as-is when `HOME` is empty. */
@@ -205,7 +205,7 @@ function lastPositional(argv: string[]): string | undefined {
  * (otherwise the whole call falls back to the classifier).
  */
 const BASH_WRITE_COMMANDS = new Set([
-  'cp', 'mv', 'rsync', 'ditto', 'install', 'tar', 'unzip', 'unar', 'curl', 'wget', 'git', 'trash',
+  'cp', 'mv', 'rsync', 'ditto', 'install', 'tar', 'unzip', 'unar', 'curl', 'wget', 'git', 'trash', 'mkdir',
 ]);
 
 /**
@@ -217,9 +217,16 @@ const BASH_WRITE_COMMANDS = new Set([
  * composite fall back to the classifier, so multi-step attacks like
  * `curl -o /tmp/e … && bash /tmp/e` never get allowPath trust from their
  * benign-looking write segment.
+ *
+ * v0.15.3 (independent review): `mkdir` was moved OUT of this set — it creates
+ * directories, so it belongs with the write commands above. While it sat here,
+ * `git -C <allowlisted repo> commit … && mkdir -p /anywhere` surfaced only the
+ * repo root as a destination, passed the `every(...)` trust proof, and could be
+ * bridged to `danger-full-access` with zero review while the mkdir wrote outside
+ * every trust root.
  */
 const BENIGN_UTILITY_COMMANDS = new Set([
-  'echo', 'printf', 'ls', 'mkdir', 'test', '[', 'true', 'false', 'pwd',
+  'echo', 'printf', 'ls', 'test', '[', 'true', 'false', 'pwd',
   'stat', 'file', 'wc', 'head', 'tail', 'which', 'dirname', 'basename',
   'date', 'sleep', 'uname', 'id', 'du', 'df', 'sort', 'uniq', 'cat',
 ]);
@@ -350,6 +357,30 @@ function destinationsOf(base: string, argv: string[], cwd: string): string[] {
       // BASH_WRITE_COMMANDS at all, and the deny band still hard-rejects
       // trash/mv against system paths before this table is reached.
       return argv.filter((a) => !a.startsWith('-'));
+    }
+    case 'mkdir': {
+      // v0.15.3 (independent review): every positional argument is a directory
+      // this command CREATES, so all of them must resolve inside the trusted
+      // roots. Only `-m`/`--mode` take a SEPARATE value (the mode is not a path);
+      // `-Z`/`--context` take none per GNU coreutils (the valued form is
+      // `--context=CTX`), and a bare `--` ends the options — a review found the
+      // first cut skipped a real target in both of those shapes.
+      const dirs: string[] = [];
+      let endOfOptions = false;
+      for (let i = 0; i < argv.length; i++) {
+        const a = argv[i] ?? '';
+        if (!endOfOptions && a === '--') {
+          endOfOptions = true;
+          continue;
+        }
+        if (!endOfOptions && (a === '-m' || a === '--mode')) {
+          i += 1;
+          continue;
+        }
+        if (!endOfOptions && a.startsWith('-')) continue;
+        dirs.push(a);
+      }
+      return dirs;
     }
     case 'cp':
     case 'mv':
@@ -501,12 +532,45 @@ function collectSegmentDestinations(
     // realpath, falling back to the classifier — safe).
     const expanded = tokens.map((t) => expandHome(expandShellVars(t, vars)));
     const first = expanded[0] ?? '';
+    // v0.15.3 (review finding): the unresolved-variable rule has to cover the
+    // command NAME too, not just destinations. `cp a /allowed && "$EVIL"/echo hi`
+    // basename-matched the benign `echo`, emitted no destination and rode along
+    // inside a composite that another segment had already proved — so the proof
+    // passed while an arbitrary binary ran under the escalation. A name that
+    // still carries `$` is never trusted (this also fails a literal filename
+    // containing `$` closed, which is the intended direction).
+    if (first.includes('$')) return false;
     const base = first.split('/').pop() ?? first;
     if (!BASH_WRITE_COMMANDS.has(base)) {
-      if (BENIGN_UTILITY_COMMANDS.has(base)) continue; // benign — no destination
+      // v0.15.3 (review finding): a PATH-PREFIXED token must not impersonate a
+      // benign utility. `./echo hi` — or `E=evil; "$E"/echo hi`, whose `$` is
+      // resolved away before this check — basename-matches `echo`, emits no
+      // destination and rides along, so an arbitrary binary would run under the
+      // escalation that another segment's destination proved. Only a bare name
+      // (what PATH lookup yields) may ride; a prefixed one falls back to the
+      // classifier. Write commands keep their basename match on purpose, so the
+      // documented `~/bin/trash …` wrapper form stays supported.
+      if (first === base && BENIGN_UTILITY_COMMANDS.has(base)) continue;
       return false; // side-effect / unknown command → whole composite falls back
     }
-    dests.push(...destinationsOf(base, expanded.slice(1), cwd.value));
+    // v0.15.3 (independently verified soundness fix): resolve every destination
+    // against the cwd in effect AT THIS SEGMENT. A relative destination used to
+    // be handed back as-is, and the allowPath check resolved it against the
+    // session cwd — so `cd /tmp/outside && cp a workspace/evil` proved
+    // `/workspace/workspace/evil` (inside a trust root) while really writing
+    // `/tmp/outside/workspace/evil`, and with an escalation attached the whole
+    // call was bridged to `danger-full-access` with zero review.
+    for (const dest of destinationsOf(base, expanded.slice(1), cwd.value)) {
+      const resolved = isAbsolute(dest) ? dest : resolve(cwd.value, dest);
+      // v0.15.3 (review finding): an environment variable that was not assigned
+      // inside the command stays literal (`$TMPDIR/y`), and a literal token is
+      // lexically "inside" the session cwd — which is ALWAYS a trust root — so
+      // the proof passed while the shell would expand it to somewhere else
+      // entirely. Refuse the whole call instead (this is what the `expandShellVars`
+      // comment already promised): an unresolvable destination is never trusted.
+      if (resolved.includes('$')) return false;
+      dests.push(resolved);
+    }
   }
   return true;
 }
@@ -522,6 +586,11 @@ function collectSegmentDestinations(
  * `cwd` is the working directory the command runs in (session cwd) — used to
  * resolve a bare `git add/commit/push` repository root and as the base for a
  * relative `cd`. Defaults to the host process cwd.
+ *
+ * **Every returned path is absolute** (v0.15.3): a relative destination is
+ * resolved against the cwd in effect at *that segment*, so a `cd` earlier in a
+ * composite is honoured by the allowPath proof instead of being silently
+ * evaluated against the session cwd (see `collectSegmentDestinations`).
  */
 export function bashWriteDestinations(cmd: string, cwd?: string): string[] {
   if (!cmd) return [];
