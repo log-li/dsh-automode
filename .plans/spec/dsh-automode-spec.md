@@ -391,6 +391,11 @@ src/
 - 顶部常驻 `## [Unreleased]` 段持续跟踪变更；发布时把 Unreleased 内容移入带日期的版本段（`## [x.y.z] - YYYY-MM-DD`，ISO 日期、新版在前）。
 - 变更按固定六类分组：`Added / Changed / Deprecated / Removed / Fixed / Security`（安全条目带头 CVE）；不新增第七类。
 - 版本标题链接到 compare diff；撤回版本标 `[YANKED]`；changelog 给人类 curated，不是 commit log 转储。
+- **★ 简洁优先（2026-09-16 用户要求）**：条目**写给使用者**，只答「变化了什么、对他意味着什么」。
+  **不要写工作过程**——验证/复现步骤、日志与审计证据、测试条数与断言清单、review 轮次与
+  发现顺序、内部函数名/文件名、修复的推导过程，一律不进 CHANGELOG（那些属于 spec 与 commit）。
+  每条尽量一句到两句；同类修改合并成一条，不逐项展开。**判断标准**：使用者读完知道「要不要升级、
+  升级后行为哪里不同」即够。
 
 **Commit（Conventional Commits 1.0）**
 - `<type>[scope]: desc`（body/footer 可选）；`fix`→PATCH、`feat`→MINOR、`BREAKING CHANGE:`（或 type 后 `!`）→MAJOR。
