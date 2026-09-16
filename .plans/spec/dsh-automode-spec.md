@@ -388,6 +388,7 @@ src/
 ## 项目治理规范（对齐行业惯例，2026-09-12）
 
 **Changelog（Keep a Changelog）**
+- **★ 双语布局（2026-09-16 用户明确）**：**单文件**，**上半部分英文、下半部分中文**（两个语言半区，`---` 分隔；`# Changelog` / `# 更新日志（Changelog）`）。**不按版本把中英交错**（曾试过，用户否决）——中英各自成半区，保持现状即可。
 - 顶部常驻 `## [Unreleased]` 段持续跟踪变更；发布时把 Unreleased 内容移入带日期的版本段（`## [x.y.z] - YYYY-MM-DD`，ISO 日期、新版在前）。
 - 变更按固定六类分组：`Added / Changed / Deprecated / Removed / Fixed / Security`（安全条目带头 CVE）；不新增第七类。
 - 版本标题链接到 compare diff；撤回版本标 `[YANKED]`；changelog 给人类 curated，不是 commit log 转储。
@@ -413,7 +414,7 @@ src/
 
 ## 发布流程（维护者，2026-09-12 起 Actions 自动化）
 
-1. **打 tag 前：CHANGELOG（双语单文件）该版本条目先把 `— unreleased` 改为发布日期**（发布即定稿，避免 tarball/Release notes 残留 unreleased；已发布包的快照不可改）。版本号就绪 + CHANGELOG 更新后：`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`（push tag 即触发 `.github/workflows/release.yml`；或 `workflow_dispatch` 手动跑当前 package.json 版本）。
+1. **打 tag 前：CHANGELOG（双语单文件，**上半英文/下半中文两个半区，两半都要改**）该版本条目先把 `— unreleased` 改为发布日期**（发布即定稿，避免 tarball/Release notes 残留 unreleased；已发布包的快照不可改）。版本号就绪 + CHANGELOG 更新后：`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`（push tag 即触发 `.github/workflows/release.yml`；或 `workflow_dispatch` 手动跑当前 package.json 版本）。
 2. Actions 门禁：build + smoke 80 项 + bridge-flow 全过后 → `npm publish`（token = repo secret `NPM_TOKEN`；2027 npm 方向：改 Trusted Publishing/OIDC + `npm publish --provenance`）→ 自动创建 GitHub Release（changelog 从 CHANGELOG.md 抽取）。
 3. 前置一次性配置：GitHub repo secret `NPM_TOKEN`（npmjs 生成 Automation token），或在 npmjs Trusted Publishers 配 OIDC。
 4. 发布前按全局规则完成 code review 后 push tag（流程见全局规则，措辞不落本公开文档）。
