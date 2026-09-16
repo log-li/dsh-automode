@@ -1187,4 +1187,25 @@ test('distinguishes config problems from transient failures', () => {
   assert.equal(classifyFailureCategory('does not support reasoning effort "off"'), 'config:unsupported-effort');
 });
 
+console.log('release notes (bilingual extraction — 2026-09-16 EN-only regression)');
+import { extractReleaseNotes } from './release-notes.mjs';
+test('extracted release notes carry BOTH the English and the Chinese half', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
+  const notes = extractReleaseNotes(changelog, pkg.version);
+  assert.match(notes, /### (Added|Changed|Fixed|Security|Removed|Deprecated)/, 'English half missing');
+  assert.match(
+    notes,
+    /### (新增|变更|修复|安全|移除|弃用)/,
+    'Chinese half missing — the GitHub Release page would ship EN-only (the v0.15.3 regression)',
+  );
+});
+test('an unknown version falls back to a pointer, never an empty body', () => {
+  assert.match(extractReleaseNotes('# Changelog\n\n## [1.0.0] — 2026-01-01\n- x\n', '9.9.9'), /see CHANGELOG\.md/);
+});
+test('a single-language CHANGELOG still yields notes instead of crashing', () => {
+  const enOnly = '# Changelog\n\n## [1.2.3] — 2026-01-01\n\n### Added\n- x\n';
+  assert.match(extractReleaseNotes(enOnly, '1.2.3'), /### Added/);
+});
+
 console.log(`\nall ${passed} smoke tests passed`);

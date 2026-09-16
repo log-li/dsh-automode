@@ -403,6 +403,7 @@ src/
 - 类型：feat/fix/docs/ci/chore/refactor/perf/test 等；footer 用 git trailer（如 `Co-authored-by:`）。
 
 **Release notes（GitHub 惯例）**
+- **★ 必须双语（2026-09-16 用户发现缺中文）**：抽取 CHANGELOG 的**两个半区**（英文 + 中文，`---` 分隔）。抽取逻辑**只此一份** = `scripts/release-notes.mjs`（`npm run release:notes`），**workflow 与任何手动刷新都调它**——不要另写切片脚本。`npm test` 断言「当前版本抽出的 notes 同时含中英两组标题」钉死这一类回归（v0.15.3 曾因手工切片落在英文半区，Release 页一度 EN-only）。
 - 正文用**裸 `@username`**（不用 markdown 链接）——GitHub 自动渲染 Contributors 头像列表。
 - 结构：Highlights（用户可见变化）→ 各变更 `by @user` 归因 → New Contributors（首次贡献者单列）→ Contributors/Community。
 - 归因措辞用 `by @user`，不用 "Thanks @user"。
