@@ -1,0 +1,16 @@
+#!/bin/sh
+# Privacy gate — runs BEFORE the commit exists.
+#
+# A local path or username that reaches a commit is in the public history
+# forever; a later "sanitize" commit cannot take it back (2026-09-16). So the
+# check has to happen here, not at push time.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Bypass deliberately (rare, e.g. false positive you have verified):
+#   git commit --no-verify
+node scripts/privacy-check.mjs --staged || {
+  echo "commit blocked: fix the leak above (or --no-verify if it is a verified false positive)"
+  exit 1
+}

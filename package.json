@@ -36,6 +36,7 @@
     "test:flow": "node scripts/bridge-flow-check.mjs",
     "test:compose": "node scripts/compose-entries.test.mjs",
     "test:pathtrust": "node scripts/e2e-path-trust.mjs",
+    "check:privacy": "node scripts/privacy-check.mjs",
     "test:e2e": "node scripts/e2e-classifier.mjs",
     "release:notes": "node scripts/release-notes.mjs",
     "prepublishOnly": "npm run build",

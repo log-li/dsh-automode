@@ -1208,4 +1208,31 @@ test('a single-language CHANGELOG still yields notes instead of crashing', () =>
   assert.match(extractReleaseNotes(enOnly, '1.2.3'), /### Added/);
 });
 
+console.log('privacy gate (a leak that enters history can never be taken back)');
+import { scan as scanPrivacy, targetFiles as privacyTargetFiles } from './privacy-check.mjs';
+test('the gate flags this machine’s paths, plain usernames and the hostname', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'am-privacy-'));
+  const dirty = join(dir, 'dirty.md');
+  const clean = join(dir, 'clean.md');
+  writeFileSync(dirty, 'evidence: /Users/example/Documents/x\nhost: builder.local\n');
+  writeFileSync(clean, 'evidence: ~/Documents/x  (no absolute home path)\n');
+  const opts = { home: '/Users/example', user: 'example', host: 'builder.local' };
+  try {
+    const hits = scanPrivacy([dirty, clean], opts);
+    assert.ok(hits.some((h) => h.needle === '/Users/example'), 'absolute home path must be flagged');
+    assert.ok(hits.some((h) => h.needle === 'builder.local'), 'hostname must be flagged');
+    assert.equal(hits.filter((h) => h.file === clean).length, 0, 'a `~`-relative line must pass');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+test('the tracked tree itself is clean (this is the gate `npm test` enforces)', () => {
+  const hits = scanPrivacy(privacyTargetFiles(false));
+  assert.deepEqual(
+    hits.map((h) => `${h.file}:${h.line}`),
+    [],
+    'a local path/username is committed — fix it in the working tree AND consider that it is already in history',
+  );
+});
+
 console.log(`\nall ${passed} smoke tests passed`);
