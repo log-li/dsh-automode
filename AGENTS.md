@@ -72,6 +72,14 @@ npm run release:notes
   就不要靠记忆（`npm test` 已有机械守卫）。
 - **Review 门禁**：代码写完、**开始验证之前**，做一次**独立模型家族**的 code review（无【严重】级问题
   才进入验证）；review 意见逐条独立核验，误报可拒绝并写明理由。
+- **E2E 门禁在 commit 前（且必须独立实例，2026-09-23 用户明确）**：顺序固定为
+  `写代码 → 独立 review → 按 review 修正 → 端到端验证（绿）→ commit → push`；**E2E 没过不许 commit**。
+  E2E ＝ 在**真实运行环境**里启动插件并走一遍真实路径、**读回真实产物**（会话日志 / decisions.jsonl /
+  模型可见输出），不是只跑 smoke/fixture 的那一层。
+  **不要用当前在用的实例验证**（正在跑的 web profile / 本次会话所在的运行时）——它结果不可信（很可能加载的
+  是旧版）、还会污染正在做的事。做法：`DSH_HOME=/tmp/<隔离目录>` + 独立 profile + 独立 cordis.patch.yml，
+  用完清理。能构造失败面就做**红绿对照**（先复现旧版失败，再验证新版通过）。
+  验证边界必须如实写进 spec 与回复（哪些层是活体 E2E、哪些层只是代码路径/离线验证）。
 - **新决策先落 spec**：设计迭代的结论进 `.plans/spec/dsh-automode-spec.md`（含变更历史），
   一次性方案快照才进 `.plans/proposed/` → 实现后移 `.plans/implemented/`。
 
