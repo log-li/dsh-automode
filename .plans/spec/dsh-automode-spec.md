@@ -432,6 +432,16 @@ src/
 - **红绿对照**：能构造失败面就构造——同一隔离环境先复现**旧版失败**（红），再验证**新版通过**（绿）；只看绿无法排除「这个问题本来就复现不出来」。
 - **边界如实落文档**：spec 与对外回复都要写清「哪些层是活体 E2E、哪些层只是代码路径/离线验证」，未验证的部分显式标注为未验证。
 
+**隔离活体 E2E 配方（2026-09-23 首次跑通，dsh `0.1.7-alpha.2` 实测）**
+1. **装目标版本的 CLI 树**（含 shipped bundles，不必碰全局安装）：`npm install --prefix /tmp/<cli> @deepseek-ai/dsh@<ver>`。
+2. **建独立 home 与 profile**：`DSH_HOME=/tmp/<home>`；`profiles/<name>/package.json` 的 `dsh.profile.bundles` = `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-headless` + 本插件，`node_modules/@log.li/dsh-automode` 指向本仓库（**link 安装，改源码即生效**）；`cordis.patch.yml` 里 `insert` 一个**驱动插件**。
+3. **驱动插件走真实命令路径**：`ctx.commands.execute(agent, '/auto', [], signal)`（与客户端敲 `/auto` 同一条 → 同一个 `writeAutoMode`），**不要伪造注入**；`headless` 不执行 `/` 命令（当成普通消息发给模型），所以必须用驱动而不是把 `/auto` 当任务文本。
+4. **凭据**：`DSH_HOME` 就是凭据查找根，隔离 home 需自带一份（用完 `trash` 清掉）；本机无 ollama 时别无零密钥路径。
+5. **先验组装**：`--dump-config` 里确认 `- id: auto-mode` 与本插件的 preset 都在（这一步不需要凭据）。
+6. **跑真回合**：`DSH_HOME=… node <cli>/lib/bin.js --profile <name> "reply with the single word READY"`。
+7. **读回真实产物**：`$DSH_HOME/sessions/**/session.v4.jsonl.zstd`（会话头 `version: 4`）里找 `agent/inbox/spliced` / `user/message` 的 `source.kind`。
+8. **红绿对照**：只需换 `node_modules/@log.li/dsh-automode` 的指向——① npm 已发布版（用户真实升级路径）② **只把 `lib/sources.js` 的 kind 回退**的仓库副本（变量单一，证明失败只由该 kind 引起）③ 本版。注意放在 profile 外的 tarball 会因 peer 解析失败而「import failed」，那是**搭法假象**，不是兼容性证据。
+
 **Contributors 与致谢（All Contributors 精神）**
 - `package.json contributors` = 代码/方法实际贡献者（包作者元数据）。
 - issue 报告（🐛）、文档（📖）、review（👀）等角色进 README Contributors 表（角色 emoji），与代码作者分开。
@@ -471,7 +481,12 @@ src/
   - ✅ 全部 10 条历史注入记录的 `source.kind` 归一为 **`plugin:auto-mode`**——与本版新写入的值**完全一致**（跨版本不分裂）；
   - ✅ **红对照**：把同一份已迁移为 v4 的产物改回退役形态再编码 → v4 在**编码期**即拒（`format v4 message requires a producer-owned source kind`）——这正是该 bug 在 v4 宿主上的真实失败面（注入连写都写不进去）；
   - ✅ 改用本版形态重新编码/恢复 → 通过。
-  - **边界（如实声明）**：本机无 0.1.7-alpha 宿主实例（各 profile 与全局 dsh 均为 `0.1.5-rc.1`），故**未做「alpha 宿主 + 完整回合」的活体 E2E**；上述验证跑的是 **alpha 发布版的真实代码路径**（迁移目录 + 恢复/准入/编码），数据是本机真实历史，而非活体宿主回合。
+  - 该检查已固化为 **`npm run test:v4`**（`scripts/e2e-v4-migration.mjs`，opt-in：自动发现 ≥ v4 的 harness 与真实 v3 会话日志，找不到则 SKIP 给指引）。**实测**：本机 171 个真实 v3 会话全部可在 v4 重开，注入记录全部为 `plugin:auto-mode`，红对照照常触发 —— `PASS`。
+- **活体 E2E（0.1.7-alpha.2 真机实例，2026-09-23 补做）**：在**完全隔离**的环境里跑真实回合（新规则要求：不用在用的实例）——`DSH_HOME=/tmp/<隔离目录>` + 独立 profile（`@deepseek-ai/dsh-base` + `dsh-headless` + 本插件，独立 `cordis.patch.yml`）+ 独立安装的 `@deepseek-ai/dsh@0.1.7-alpha.2` CLI；用驱动插件调**真实命令路径** `ctx.commands.execute(agent, '/auto', …)`（与客户端敲 `/auto` 同一条命令 → 同一个 `writeAutoMode`），而非伪造注入：
+  - ❌ **红（npm 上已发布的 0.15.3）**：`/auto executed: {"kind":"success","text":"Auto mode enabled."}` 之后 `dsh: format v4 message requires a producer-owned source kind`，**exit 1**——用户真实升级路径下的失败面被完整复现。
+  - ❌ **红（精确对照：只把 `lib/sources.js` 的 kind 回退成退役形态，其余同本版）**：同样 `exit 1` + 同一报错 ⇒ 变量单一，确认失败**只**由 source kind 引起。
+  - ✅ **绿（本版）**：回合正常完成（`exit 0`），真实产物 `session.v4.jsonl.zstd`（会话头 `version: 4`）里 `agent/inbox/spliced` 与随后的 `user/message` 均以 **`{"kind":"plugin:auto-mode"}`** 落库。
+  - **边界（如实声明）**：活体只覆盖了 `writeAutoMode` 这条注入路径（即 `/auto` 命令触发的那条）；熔断跳闸提示与拒绝解释两条注入路径**未在活体上逐一触发**（它们与本条共用同一个 `AUTO_MODE_SOURCE` 常量与同一个 `agent.inject`，由 smoke 结构断言覆盖）。隔离环境用完已清理（凭据副本已入回收站）。
 - **变更性质**：**内部契约修复，判定行为零变化**——不改频带、分类器、pre-execute 门与桥接的任何判定，模型可见文本也不变；仅 source 归属标识换名。老宿主 trajectory 来源标签由「Plugin · auto-mode」变为「Plugin:auto-mode」（纯呈现）。
 
 ### v0.15.3（2026-09-16，已完成）
