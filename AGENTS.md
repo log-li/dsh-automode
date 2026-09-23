@@ -79,8 +79,11 @@ npm run release:notes
   E2E ＝ 在**真实运行环境**里启动插件并走一遍真实路径、**读回真实产物**（会话日志 / decisions.jsonl /
   模型可见输出），不是只跑 smoke/fixture 的那一层。
   **不要用当前在用的实例验证**（正在跑的 web profile / 本次会话所在的运行时）——它结果不可信（很可能加载的
-  是旧版）、还会污染正在做的事。做法：`DSH_HOME=/tmp/<隔离目录>` + 独立 profile + 独立 cordis.patch.yml，
+  是旧版）、还会污染正在做的事。做法：`HOME=/tmp/<x>` **和** `DSH_HOME=/tmp/<x>/.dsh` 都隔离（本插件的审计
+  日志走 `homedir()`，只隔离 `DSH_HOME` 会把测试记录写进真实审计日志）+ 独立 profile + 独立 `cordis.patch.yml`，
   用完清理。能构造失败面就做**红绿对照**（先复现旧版失败，再验证新版通过）。
+  **覆盖面按 spec §项目治理规范 的「完整 E2E 覆盖清单」跑**（A 必跑 / B 可结构断言替代须写理由 / C 按触达面追加），
+  不是只跑与改动相关的那一条链；**必跑项没跑完不许 commit**。
   验证边界必须如实写进 spec 与回复（哪些层是活体 E2E、哪些层只是代码路径/离线验证）。
 - **新决策先落 spec**：设计迭代的结论进 `.plans/spec/dsh-automode-spec.md`（含变更历史），
   一次性方案快照才进 `.plans/proposed/` → 实现后移 `.plans/implemented/`。
