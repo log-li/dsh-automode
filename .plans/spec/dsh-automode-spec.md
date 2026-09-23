@@ -459,6 +459,12 @@ src/
   v4 迁移对老日志的归一结果：`{kind:'plugin',plugin:'auto-mode'}` → `{"kind":"plugin:auto-mode"}`；非 `plugin` 的 kind 原样透传。顺带核对：`session.append('permission/preset')` 在 v4 仍属**已知事件类型**（`permission/preset` ∈ `KNOWN_SESSION_EVENT_TYPES`），不是不兼容点。
 - **修复**：7 处 source 统一改为 producer-owned kind **`{ kind: 'plugin:auto-mode' }`**（去掉 `plugin` 字段）。**不做版本探测**的理由见「版本支持声明 → 注入消息的来源标识」：该 kind 在 v3/v4 都被接受，且与 v4 迁移老日志的落点完全一致。
 - **回归覆盖**：smoke 新增结构断言——harness 捕获的每条注入消息其 `source.kind` 必须是 producer-owned（非空、且不等于退役的 `plugin`），覆盖「启用 auto mode 注入」「熔断跳闸提示」「拒绝解释」三条注入路径（`src` + `lib` 双查，防源码改了产物没重建）。
+- **真实历史的迁移/重开验证（用本机 v0.15.x 写下的真实会话日志跑 v4 真实代码路径）**：取 3 个真实 v3 会话（654 / 1133 / 870 事件，含 2 / 4 / 4 条**改动前**写入的注入记录），经 v4 目录的 `createRestore({recovery:'recoverable', validation:'current'})` 逐行喂入并 `finish()`：
+  - ✅ 三个会话**全部在 v4 上重开成功**（全部事件级迁移无异常）；
+  - ✅ 全部 10 条历史注入记录的 `source.kind` 归一为 **`plugin:auto-mode`**——与本版新写入的值**完全一致**（跨版本不分裂）；
+  - ✅ **红对照**：把同一份已迁移为 v4 的产物改回退役形态再编码 → v4 在**编码期**即拒（`format v4 message requires a producer-owned source kind`）——这正是该 bug 在 v4 宿主上的真实失败面（注入连写都写不进去）；
+  - ✅ 改用本版形态重新编码/恢复 → 通过。
+  - **边界（如实声明）**：本机无 0.1.7-alpha 宿主实例（各 profile 与全局 dsh 均为 `0.1.5-rc.1`），故**未做「alpha 宿主 + 完整回合」的活体 E2E**；上述验证跑的是 **alpha 发布版的真实代码路径**（迁移目录 + 恢复/准入/编码），数据是本机真实历史，而非活体宿主回合。
 - **变更性质**：**内部契约修复，判定行为零变化**——不改频带、分类器、pre-execute 门与桥接的任何判定，模型可见文本也不变；仅 source 归属标识换名。老宿主 trajectory 来源标签由「Plugin · auto-mode」变为「Plugin:auto-mode」（纯呈现）。
 
 ### v0.15.3（2026-09-16，已完成）
