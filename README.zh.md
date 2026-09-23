@@ -291,6 +291,8 @@ src/
 | `≥ 0.1.5-rc.1` | 持久的 `permissions` 会话投影（`ctx.sessionProjections.stateOf`） |
 
 dsh `0.1.5-rc.1` 移除了 `session.events` 访问器——没有投影路径时，每个 auto-mode 回合都会在组装系统提示时报 `Cannot read properties of undefined (reading 'length')`（v0.11.2 修复）。**dsh `≥ 0.2.0` 尚未验证**——只有对新内核实测通过后才应上调 peer 范围。
+
+DSH session format v4（`dsh ≥ 0.1.7-alpha.1`）退役了 catch-all 的 `plugin` 消息来源标识，并拒绝所有 durable 消息槽位上的该形态。注入消息改用本插件自有的 source kind——与 v3 → v4 会话日志迁移把老记录归一到的标识一致，因此两代格式都接受，无需版本探测（v0.15.4 修复）。
 - **仅在 macOS 上验证**。已针对 macOS 文件系统、[DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 运行时与开发时使用的 DSH 版本做过测试。路径语义——包括 macOS 的 `/tmp` → `/private/tmp` 软链（由 realpath 最近祖先解析处理）与工作区路径信任——**尚未在 Linux / Windows 上验证**，deny 模式与路径匹配在这些平台上可能有差异。
 - **发现 bug，或其它平台上有问题？** 欢迎提交 issue 或 PR：[github.com/log-li/dsh-automode](https://github.com/log-li/dsh-automode)。
 

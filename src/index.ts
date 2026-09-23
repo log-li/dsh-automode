@@ -24,6 +24,7 @@ import * as userApprovalModule from '@deepseek-ai/dsh-user-approval';
 import * as sandboxPolicyModule from '@deepseek-ai/dsh-sandbox-policy';
 
 import { Config, type ConfigType, expandDefaults } from './config.js';
+import { AUTO_MODE_SOURCE } from './sources.js';
 import { permissionSnapshot } from './permission-state.js';
 import { classifyBand, compileRegex, compileGlob, bashCommandOf, isFileTool, collectPaths, looksMachineLeaving } from './bands.js';
 import { findAllowRule, findDenyRule, isAllowlisted } from './rules.js';
@@ -170,7 +171,7 @@ export function writeAutoMode(ctx: Context, agent: Agent): void {
   }
   agent.inject(createUserMessage({
     content: [{ type: 'text', text: 'Auto mode enabled. Permission-gated tool calls will now be decided automatically.' }],
-    source: { kind: 'plugin', plugin: 'auto-mode' },
+    source: AUTO_MODE_SOURCE,
   }));
 }
 
@@ -306,7 +307,7 @@ async function decideAuto(
       // Tell the model to escalate directly (skip try→error→escalate).
       agent.inject(createUserMessage({
         content: [{ type: 'text', text: BREAKER_TRIPPED_HINT }],
-        source: { kind: 'plugin', plugin: 'auto-mode' },
+        source: AUTO_MODE_SOURCE,
       }));
     }
     return 'rejected';
@@ -417,7 +418,7 @@ async function decideAuto(
           // Tell the model to escalate directly (skip try→error→escalate).
           agent.inject(createUserMessage({
             content: [{ type: 'text', text: BREAKER_TRIPPED_HINT }],
-            source: { kind: 'plugin', plugin: 'auto-mode' },
+            source: AUTO_MODE_SOURCE,
           }));
         }
         // Inject explanation so the model knows it was the reviewer, not a human.
@@ -431,7 +432,7 @@ async function decideAuto(
               'The tool result may say "the user rejected" — in auto mode that usually means the reviewer, not a person. ' +
               'Try a smaller or safer version, or ask the user for explicit permission.',
           }],
-          source: { kind: 'plugin', plugin: 'auto-mode' },
+          source: AUTO_MODE_SOURCE,
         }));
         return 'rejected';
       }

@@ -10,6 +10,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage, type ContentBlock, type Message } from '@deepseek-ai/dsh-llm';
+import { AUTO_MODE_SOURCE } from './sources.js';
 
 /** A classifier decision: allow or reject (two-state; ask was removed in 0.8.0). */
 export type VerdictDecision = 'allow' | 'reject';
@@ -174,7 +175,7 @@ async function streamTokens(
         messages: [
           createUserMessage({
             content: [{ type: 'text', text: spec.user }],
-            source: { kind: 'plugin', plugin: 'auto-mode' },
+            source: AUTO_MODE_SOURCE,
           }),
         ],
         temperature: spec.temperature,

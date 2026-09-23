@@ -12,6 +12,7 @@ import { findAllowRule, findDenyRule, isAllowlisted, patternMatches } from '../l
 import { parseVerdict, renderTranscript, renderUserIntent, restoreToolCallArgs, actionSummaryOf, parseFastFilterDigit } from '../lib/classifier.js';
 import { buildSystemPrompt, buildUserMessage, promptInputOf } from '../lib/prompt.js';
 import { isAuto, writeAutoMode, ALLOWLIST_SENTENCE } from '../lib/index.js';
+import { AUTO_MODE_SOURCE, RETIRED_PLUGIN_KIND } from '../lib/sources.js';
 import { Breaker } from '../lib/breaker.js';
 import { VerdictCache, hashString } from '../lib/cache.js';
 import { AllowPathBridge } from '../lib/bridge.js';
@@ -268,6 +269,7 @@ test('provenance: injections never authorize, a missing source stays a compat fa
   const mk = (source, text) => ({ role: 'user', ...(source ? { source } : {}), content: [{ type: 'text', text }] });
   assert.ok(renderUserIntent([mk({ kind: 'user' }, 'push it')], 6).includes('push it'), 'human message authorizes');
   assert.equal(renderUserIntent([mk({ kind: 'plugin', plugin: 'x' }, 'push it')], 6), '', 'plugin injection never authorizes');
+  assert.equal(renderUserIntent([mk(AUTO_MODE_SOURCE, 'push it')], 6), '', 'our own producer-owned kind must not authorize either (v0.15.4)');
   assert.equal(renderUserIntent([mk({ kind: 'agent-instructions' }, 'push it')], 6), '', 'instruction injection never authorizes');
   assert.equal(renderUserIntent([mk({}, 'push it')], 6), '', 'a source object WITHOUT a kind is untrustworthy (v0.15.1 review m7)');
   assert.ok(renderUserIntent([mk(undefined, 'push it')], 6).includes('push it'), 'no source at all = old-host compat fallback');
@@ -563,6 +565,66 @@ test('writeAutoMode is a no-op when auto mode is already selected', () => {
   writeAutoMode(ctx, agent);
   assert.equal(events.length, 1);
   assert.equal(injected.length, 0);
+});
+
+console.log('injection provenance (v0.15.4, issue #3 — session format v4)');
+// The rule dsh >= 0.1.7-alpha.1 (session format v4) enforces inside
+// `dsh-session-format-v3-to-v4`: every durable message slot — user/message,
+// agent/inbox/spliced (what agent.inject() writes), system/assistant/tool and
+// session/title-llm-request — must carry a producer-owned source kind. The
+// retired catch-all `plugin` kind is refused outright.
+const admitsV4 = (source) =>
+  typeof source === 'object' && source !== null &&
+  typeof source.kind === 'string' && source.kind.length > 0 && source.kind !== RETIRED_PLUGIN_KIND;
+test('the v4 admission predicate is the one the host applies (positive control)', () => {
+  assert.equal(RETIRED_PLUGIN_KIND, 'plugin');
+  assert.equal(admitsV4(AUTO_MODE_SOURCE), true, 'our produced source must pass');
+  assert.equal(admitsV4({ kind: 'plugin', plugin: 'auto-mode' }), false, 'the retired catch-all must fail');
+  assert.equal(admitsV4({ kind: '' }), false);
+  assert.equal(admitsV4(undefined), false);
+});
+test('the shared source is producer-owned and matches what the v3→v4 migration writes', () => {
+  assert.equal(AUTO_MODE_SOURCE.kind, 'plugin:auto-mode');
+  assert.equal('plugin' in AUTO_MODE_SOURCE, false, 'the retired `plugin` field must be gone');
+  // The released v3→v4 migration rewrites historical {kind:'plugin',plugin:'auto-mode'}
+  // records to exactly this kind and passes non-`plugin` kinds through, so one
+  // constant is valid on both format generations — no version probing needed.
+  assert.match(AUTO_MODE_SOURCE.kind, /^plugin:/);
+});
+test('the reachable injection carries the producer-owned source (v4 admission)', () => {
+  const { agent, injected, ctx } = makeAutoHarness();
+  writeAutoMode(ctx, agent);
+  assert.equal(injected.length, 1);
+  assert.equal(admitsV4(injected[0].source), true, `injected source must pass v4: ${JSON.stringify(injected[0].source)}`);
+  assert.deepEqual(injected[0].source, AUTO_MODE_SOURCE);
+});
+test('every injection site uses the shared source (src + built lib, all 7 call sites)', () => {
+  // Review-proofing: the harness only reaches writeAutoMode, so the breaker
+  // hints (index.ts ×2, pre-execute.ts ×2), the deny explanation and the
+  // classifier request are pinned structurally — in BOTH the source and the
+  // compiled artifact that actually runs. The exact counts are deliberate
+  // tripwires: a legitimate 8th site or a locally valid inline kind should make
+  // someone update this test knowingly, not slip through.
+  const groups = [
+    ['src', ['../src/index.ts', '../src/pre-execute.ts', '../src/classifier.ts']],
+    ['lib', ['../lib/index.js', '../lib/pre-execute.js', '../lib/classifier.js']],
+  ];
+  for (const [label, files] of groups) {
+    let callSites = 0;
+    for (const rel of files) {
+      const text = readFileSync(new URL(rel, import.meta.url), 'utf8');
+      const calls = (text.match(/createUserMessage\(\{/g) ?? []).length;
+      const sourced = (text.match(/source: AUTO_MODE_SOURCE/g) ?? []).length;
+      assert.ok(calls > 0, `${rel}: expected createUserMessage call sites`);
+      assert.equal(sourced, calls, `${rel}: every createUserMessage must take the shared producer-owned source`);
+      assert.ok(
+        !/source:\s*\{\s*kind:\s*['"]plugin['"]/.test(text),
+        `${rel}: the retired catch-all source shape must not reappear`,
+      );
+      callSites += calls;
+    }
+    assert.equal(callSites, 7, `${label}: expected 7 message construction sites (4 index + 2 pre-execute + 1 classifier)`);
+  }
 });
 
 console.log('index.ts probeSetter (v0.14.3, issue #1 — setters may be removed by host)');

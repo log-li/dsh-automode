@@ -7,6 +7,11 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ### Changed
 - (track upcoming changes here; moved into a dated version section at release time — Keep a Changelog)
 
+## [0.15.4] — 2026-09-23
+
+### Fixed
+- **Injected Auto Mode messages are accepted by DSH session format v4.** Every message the plugin injects used the retired catch-all source kind `plugin`, which v4 refuses on every durable message slot — including `agent/inbox/spliced`, the event `agent.inject()` writes. On `dsh >= 0.1.7-alpha.1` that broke every injection: where the failure propagates it took the whole step down, and the two best-effort breaker hints were dropped silently. Messages now carry the plugin's own source kind, the same identity the released v3 → v4 migration rewrites old records to, so one value covers both format generations. Reported in [#3](https://github.com/log-li/dsh-automode/issues/3).
+
 ## [0.15.3] — 2026-09-16
 
 ### Added
@@ -109,6 +114,11 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [Unreleased]
 
 （发布前在此跟踪变更；发布时移入带日期的版本段——Keep a Changelog）
+
+## [0.15.4] — 2026-09-23
+
+### 修复
+- **注入的 Auto Mode 消息现在能被 DSH session format v4 接受。** 插件注入的每条消息都用已退役的 catch-all source kind `plugin`，而 v4 会拒绝**所有** durable 消息槽位——包括 `agent.inject()` 写入的 `agent/inbox/spliced`。在 `dsh >= 0.1.7-alpha.1` 上这些注入全部失效：失败会上抛的那几处会把所在 step 一起带垮，两处 best-effort 的熔断提示则被静默丢弃。现改用插件自有的 source kind，与 v4 迁移把老记录归一到的标识一致，从而一个取值同时覆盖两代格式。见 [#3](https://github.com/log-li/dsh-automode/issues/3)。
 
 ## [0.15.3] — 2026-09-16
 

@@ -17,6 +17,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ConfigType } from './config.js';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { compileRegex, bashCommandOf, compileGlob, matchAllow, isCompositeShell, bashWriteDestinations, isFileTool, collectPaths, collectDenyPaths, scanDenyBand, looksMachineLeaving } from './bands.js';
+import { AUTO_MODE_SOURCE } from './sources.js';
 import { VerdictCache, hashString } from './cache.js';
 import { Breaker } from './breaker.js';
 import { AllowPathBridge } from './bridge.js';
@@ -346,7 +347,7 @@ export function registerPreExecute(
               try {
                 exec.agent.inject(createUserMessage({
                   content: [{ type: 'text', text: BREAKER_TRIPPED_HINT }],
-                  source: { kind: 'plugin', plugin: 'auto-mode' },
+                  source: AUTO_MODE_SOURCE,
                 }));
               } catch { /* best effort */ }
             }
@@ -449,7 +450,7 @@ export function registerPreExecute(
                 try {
                   exec.agent.inject(createUserMessage({
                     content: [{ type: 'text', text: BREAKER_TRIPPED_HINT }],
-                    source: { kind: 'plugin', plugin: 'auto-mode' },
+                    source: AUTO_MODE_SOURCE,
                   }));
                 } catch { /* best effort */ }
               }

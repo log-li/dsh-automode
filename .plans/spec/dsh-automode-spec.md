@@ -221,6 +221,13 @@ src/
 | `0.1.0-rc.6` – `0.1.4.x` | `session.events` 事件日志（`effectivePermissionPreset` 等） |
 | `≥ 0.1.5-rc.1` | 持久的 `permissions` 会话投影（`ctx.sessionProjections.stateOf`） |
 
+**注入消息的来源标识（v0.15.4，session format v4 兼容）**：插件注入的每条消息都要带 source kind。**`{ kind: 'plugin', plugin: '…' }` 这个 catch-all 形态已在 `dsh ≥ 0.1.7-alpha.1`（session format v4）退役**——v4 原生准入对 `kind === 'plugin'` 直接抛 `format v4 message requires a producer-owned source kind`，覆盖 `user/message`、`agent/inbox/spliced`（`agent.inject` 走这条）、`system/message`、`assistant/message`、`tool/result`、`session/title-llm-request` 全部 durable 消息槽位。本项目统一改用 **producer-owned kind `{ kind: 'plugin:auto-mode' }`**（不再带 `plugin` 字段）：
+
+- **一个 kind 同时兼容 v3 与 v4，无需版本探测**：v3 宿主对 kind 只要求「非空字符串」（原生行准入与 payload 语义均放行）；v4 准入接受任意非空且非 `plugin` 的 kind。
+- **与老日志的迁移结果收敛**：v4 迁移把历史记录里的 `{kind:'plugin',plugin:'auto-mode'}` 归一为 `{"kind":"plugin:auto-mode"}`，非 `plugin` 的 kind 原样透传——升级前后同一会话的注入标识一致，不会并存两种 kind。
+- **命名依据**：v4 迁移对非第一方插件名（`auto-mode` 不在其 `RENAMED_PRODUCERS` / `RELEASED_SAME_NAME_PRODUCERS` 表内）的兜底正是 `` `plugin:${plugin}` ``。
+- 唯一副作用：老宿主 trajectory 的来源标签由「Plugin · auto-mode」变为「Plugin:auto-mode」（纯呈现，不影响判定与投递）。
+
 - **`≥ 0.2.0` 未验证**：只有对新内核实测通过后才应上调 peer 范围。
 - 不升 major 的理由：单次兼容修复对使用者零行为变化；1.0.0 的时机由 dsh 内核 stable 驱动，不由单次兼容修复驱动。
 
@@ -437,6 +444,22 @@ src/
    教训：**能被测试卡住的，就不要靠记忆**；发布流程必须有一道「文档描述 == 当前行为」的机械关卡。
 
 ## 变更历史
+
+### v0.15.4（2026-09-23，已完成）
+
+- **来源**：issue [#3](https://github.com/log-li/dsh-automode/issues/3)（2026-09-22，外部报告）——「Auto Mode 注入的消息用了插件自有的 source kind，DSH session format v4 拒绝非 producer 自有的 durable 消息来源，导致 step 失败/会话历史不可读」。**核实结论：真问题**（非误报），但影响面限于 `dsh ≥ 0.1.7-alpha.1`（dist-tag `alpha`），`0.1.7` 转 stable 即影响全部用户。
+- **根因**：注入消息统一用 `source: { kind: 'plugin', plugin: 'auto-mode' }`（7 处：`index.ts`×4、`pre-execute.ts`×2、`classifier.ts`×1）。v3 时代 `plugin` 是 catch-all kind，`dsh-llm` 的 `MessageSourceMap` 明确提供；**v4 起该 kind 被移除**（类型注释：「there is no shared catch-all `plugin` kind」，改为每个 producer 在自己的模块里声明 kind，如第一方 `dsh-agent-loop` 用 `runtime-context`），且新增 `dsh-session-format-v3-to-v4` 的原生准入 `source()` 对 `kind === 'plugin'` 直接抛 `SessionFormatError: format v4 message requires a producer-owned source kind`（准入对全部 durable 消息槽位生效：`user/message`、`system|assistant|tool` 的 `message`、`agent/inbox/spliced` 的 `inserted`、`session/title-llm-request` 的 `messages`）。**v4 宿主上的表现按调用点分两种**：失败会上抛的几处（`writeAutoMode`、`decideAuto` 的两处未包裹注入）把所在 step 一起带垮；`pre-execute` 的两处包在 `try { … } catch { /* best effort */ }` 里，表现为提示被**静默丢弃**（比可见失败更隐蔽）。
+- **实测证据**（把 `0.1.7-alpha.2` 各包装进 `/tmp` 探针，直接调 `assertV4RowAdmission` / 发布包内部的 `rewriteV3MessageSource`）：
+
+  | 输入 | v4（0.1.7-alpha.2） | v3（0.1.5-rc.1 本机） |
+  |---|---|---|
+  | `{kind:'plugin',plugin:'auto-mode'}` | ❌ `user/message` 与 `agent/inbox/spliced` 均 REJECTED | ✅ |
+  | `{kind:'plugin:auto-mode'}` | ✅ 两个槽位均 ACCEPTED | ✅ |
+
+  v4 迁移对老日志的归一结果：`{kind:'plugin',plugin:'auto-mode'}` → `{"kind":"plugin:auto-mode"}`；非 `plugin` 的 kind 原样透传。顺带核对：`session.append('permission/preset')` 在 v4 仍属**已知事件类型**（`permission/preset` ∈ `KNOWN_SESSION_EVENT_TYPES`），不是不兼容点。
+- **修复**：7 处 source 统一改为 producer-owned kind **`{ kind: 'plugin:auto-mode' }`**（去掉 `plugin` 字段）。**不做版本探测**的理由见「版本支持声明 → 注入消息的来源标识」：该 kind 在 v3/v4 都被接受，且与 v4 迁移老日志的落点完全一致。
+- **回归覆盖**：smoke 新增结构断言——harness 捕获的每条注入消息其 `source.kind` 必须是 producer-owned（非空、且不等于退役的 `plugin`），覆盖「启用 auto mode 注入」「熔断跳闸提示」「拒绝解释」三条注入路径（`src` + `lib` 双查，防源码改了产物没重建）。
+- **变更性质**：**内部契约修复，判定行为零变化**——不改频带、分类器、pre-execute 门与桥接的任何判定，模型可见文本也不变；仅 source 归属标识换名。老宿主 trajectory 来源标签由「Plugin · auto-mode」变为「Plugin:auto-mode」（纯呈现）。
 
 ### v0.15.3（2026-09-16，已完成）
 
