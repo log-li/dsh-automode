@@ -432,9 +432,39 @@ src/
 - **红绿对照**：能构造失败面就构造——同一隔离环境先复现**旧版失败**（红），再验证**新版通过**（绿）；只看绿无法排除「这个问题本来就复现不出来」。
 - **边界如实落文档**：spec 与对外回复都要写清「哪些层是活体 E2E、哪些层只是代码路径/离线验证」，未验证的部分显式标注为未验证。
 
+**「完整 E2E」= 按下面的覆盖清单跑，而不是「跑通与本次改动相关的那一条路径」（2026-09-23 用户追问后定）**
+
+背景：v0.15.4 的活体 E2E 只覆盖了 `/auto` 一条注入链。原因是当时**没有「完整」的可执行定义**，靠临场按「要证明的断言」圈范围——这不够。清单把「完整」钉死，避免下次再用判断代替覆盖。
+
+**A. 每次发版必跑的活体链（独立实例，逐条留证据）**
+| # | 链 | 通过判据 | 证据来源 |
+|---|---|---|---|
+| A1 | 加载 | `--dump-config` 含 `- id: auto-mode` 与本插件 preset；运行期 `event:boot` 落审计 | 配置输出 + `decisions.jsonl` |
+| A2 | 进入 auto mode | `/auto` 命令返回成功，注入**落库**且会话可重开 | 会话日志 |
+| A3 | deny 拦下 | 目标动作**未执行**（文件未被创建/未被移动）+ 审计留下 deny 记录（含命中原因） | `decisions.jsonl` + 目标侧核对 |
+| A4 | 白名单提权桥接 | 白名单内、workspace 外：`curated allowPath` → `approval-bridge` → `allowed-once`，**零分类器、零人工** | `decisions.jsonl` |
+| A5 | 会话格式兼容 | `npm run test:v4` PASS（真实历史重开 + 注入标识归一 + 退役形态红对照） | 脚本输出 |
+
+**B. 可用结构断言替代（必须写明理由；改动触及其逻辑时升格为必跑）**
+- **审批路径的解释注入**（`decideAuto` 判 reject 时的注入）：2026-09-23 实测**造不出来**——「让模型去做坏事」这种提示**本身就是用户请求**，分类器按「用户是最终决断者」放行（实测 `/usr/local/etc` 写入被判 `pre-execute-allow` + `allowed-once`）。该注入只在「gate 放行到审批 + 缓存未命中 + 判 reject」三条件同时成立时可达 ⇒ **结构性替代**（同一 `AUTO_MODE_SOURCE` + 同一 `agent.inject` + smoke 的 7 处调用点断言）；要活体触发得构造「非用户请求」的注入式场景。
+- **熔断跳闸注入**：需 3 次连续 deny（3× 真实模型调用，且判准不准不确定）；它与上条共用同一 `AUTO_MODE_SOURCE` 与同一 `agent.inject`，smoke 有 src+lib 双查的结构断言覆盖全部 7 个调用点 ⇒ **替代**。若改到 `breaker.ts` 或跳闸分支 → **必跑**。
+- **权限事实的另一条探测分支**（`0.1.0-rc.6–0.1.4.x` 事件日志 vs `≥0.1.5-rc.1` 投影）：活体一次只能跑一个宿主版本 ⇒ 另一分支用 smoke 的两个 fixture（`legacyEvents` / `projections` 开关）替代。
+- **非 auto-mode 会话不干预**：smoke 断言替代；但改动触及门控条件时必须活体跑一次（防「一直不生效」的静默失败）。
+
+**C. 按改动触达面追加**
+- 触及分类器 prompt / 预筛 ⇒ 真实模型判定对照（历史上用 5/5 复现法）。
+- 触及信任证明 / 写目标提取 ⇒ `npm run test:pathtrust` + 至少一条**真机**复合命令。
+- 触及系统提示 / 注入文案 ⇒ 按「E2E 验证审计规则」通读**模型实际看到的完整输出**。
+- 触及会话格式 / 来源标识 ⇒ A5 必跑，且优先用**真实历史**（本机历史会话）而非构造样本。
+
+**D. 记录与判定**
+- 每次发版在 spec 记一张结果表：每条链 ✅ / 未跑 + 原因；**未跑项必须显式标注，不得默认没问题**。
+- 有 A 类未跑 ⇒ **不得 commit/push**，除非用户明确同意并记录在案。
+- 替代（B 类）必须在结果表里写明「用哪条断言替代、为什么」。
+
 **隔离活体 E2E 配方（2026-09-23 首次跑通，dsh `0.1.7-alpha.2` 实测）**
 1. **装目标版本的 CLI 树**（含 shipped bundles，不必碰全局安装）：`npm install --prefix /tmp/<cli> @deepseek-ai/dsh@<ver>`。
-2. **建独立 home 与 profile**：`DSH_HOME=/tmp/<home>`；`profiles/<name>/package.json` 的 `dsh.profile.bundles` = `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-headless` + 本插件，`node_modules/@log.li/dsh-automode` 指向本仓库（**link 安装，改源码即生效**）；`cordis.patch.yml` 里 `insert` 一个**驱动插件**。
+2. **建独立 home 与 profile**：`HOME=/tmp/<home>` **且** `DSH_HOME=/tmp/<home>/.dsh` —— **两个都要设**：会话/凭据按 `DSH_HOME` 找，但本插件的审计日志走 `homedir()`（`~/.dsh/auto-mode/decisions.jsonl`），**只设 `DSH_HOME` 会把测试记录写进用户真实的审计日志**（2026-09-23 首次活体跑时实际发生过）。隔离后所有状态（sessions / decisions.jsonl / 凭据）都落在同一个临时目录下。`profiles/<name>/package.json` 的 `dsh.profile.bundles` = `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-headless` + 本插件，`node_modules/@log.li/dsh-automode` 指向本仓库（**link 安装，改源码即生效**）；`cordis.patch.yml` 里 `insert` 一个**驱动插件**。
 3. **驱动插件走真实命令路径**：`ctx.commands.execute(agent, '/auto', [], signal)`（与客户端敲 `/auto` 同一条 → 同一个 `writeAutoMode`），**不要伪造注入**；`headless` 不执行 `/` 命令（当成普通消息发给模型），所以必须用驱动而不是把 `/auto` 当任务文本。
 4. **凭据**：`DSH_HOME` 就是凭据查找根，隔离 home 需自带一份（用完 `trash` 清掉）；本机无 ollama 时别无零密钥路径。
 5. **先验组装**：`--dump-config` 里确认 `- id: auto-mode` 与本插件的 preset 都在（这一步不需要凭据）。
@@ -487,6 +517,20 @@ src/
   - ❌ **红（精确对照：只把 `lib/sources.js` 的 kind 回退成退役形态，其余同本版）**：同样 `exit 1` + 同一报错 ⇒ 变量单一，确认失败**只**由 source kind 引起。
   - ✅ **绿（本版）**：回合正常完成（`exit 0`），真实产物 `session.v4.jsonl.zstd`（会话头 `version: 4`）里 `agent/inbox/spliced` 与随后的 `user/message` 均以 **`{"kind":"plugin:auto-mode"}`** 落库。
   - **边界（如实声明）**：活体只覆盖了 `writeAutoMode` 这条注入路径（即 `/auto` 命令触发的那条）；熔断跳闸提示与拒绝解释两条注入路径**未在活体上逐一触发**（它们与本条共用同一个 `AUTO_MODE_SOURCE` 常量与同一个 `agent.inject`，由 smoke 结构断言覆盖）。隔离环境用完已清理（凭据副本已入回收站）。
+- **按「完整 E2E 覆盖清单」补齐的活体结果（2026-09-23，同一隔离实例的第二轮，`HOME` 与 `DSH_HOME` 都隔离）**：
+
+  | # | 链 | 结果 | 证据 |
+  |---|---|---|---|
+  | A1 | 加载 | ✅ | `--dump-config` 出现 `- id: auto-mode` 与本插件 preset；运行期 `event:boot` 落隔离 home 的 `decisions.jsonl` |
+  | A2 | 进入 auto mode | ✅ | `command/run: auto` → 注入以 `plugin:auto-mode` 落 `agent/inbox/spliced` + `user/message`，`exit 0` |
+  | A3 | deny 拦下 | ✅ | 硬频带：`pre-execute-deny`（命中 `mv /etc|usr|…` 模式）→ `/etc/hosts` 未被移动、目标文件未生成。**且提示里"用户明确要求"也照拦**——硬底线对任何人不开 |
+  | A4 | 白名单提权桥接 | ✅ | `pre-execute-fileop(esc=true,inTree=true)` → `pre-execute-allow: curated allowPath` → `approval-bridge` → `decision allowed-once`；文件真写出，**零分类器零人工** |
+  | A5 | 会话格式兼容 | ✅ | `npm run test:v4` PASS（173 个真实会话重开 + 10 条注入记录归一 + 3 次红对照） |
+  | B | 审批路径解释注入 / 熔断跳闸注入 | 未活体触发（按清单 B 类替代） | 见「完整 E2E 覆盖清单 → B」：前者实测**造不出**（提示本身即授权 → 分类器正确放行）；两者共用同一常量与同一 `agent.inject`，smoke 7 处调用点断言覆盖 |
+  | B | 另一条权限探测分支 / 非 auto-mode 不干预 | 未活体触发（B 类替代） | smoke 的 `legacyEvents` / `projections` 开关 fixture 与门控断言 |
+
+  - **额外观测（同一轮真机）**：分类器的**放行**路径也顺带活体验证——「用户明确要求 + 可逆低影响」的越区写被判 `pre-execute-allow` + `allowed-once`（授权模型在 alpha 宿主上成立）；文件最终没建成是因为 `/usr/local/etc` 需要 root，**不是被插件拦**。
+  - **搭法坑（已并入配方）**：驱动插件若用**跨 profile 的相对符号链接**会静默不加载（表现为 `command/run: auto` 缺失 → auto mode 未生效 → 插件完全不介入）；**插件本体仍会 boot**，只看 boot 日志会误判为"已加载即已生效"。
 - **变更性质**：**内部契约修复，判定行为零变化**——不改频带、分类器、pre-execute 门与桥接的任何判定，模型可见文本也不变；仅 source 归属标识换名。老宿主 trajectory 来源标签由「Plugin · auto-mode」变为「Plugin:auto-mode」（纯呈现）。
 
 ### v0.15.3（2026-09-16，已完成）
