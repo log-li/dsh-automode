@@ -416,6 +416,7 @@ src/
 - **历史不可撤销**：本机路径/用户名一旦进入 commit，就永久留在公开历史里——**后一个「中性化」commit 抹不掉它**（实例：本仓库 v0.15.3 时 `/Users/<user>` 已存在于 **8 个历史 commit**，`a75a7f3` 只改了工作树，旧 commit 照旧可见）。
 - **因此检查必须在 commit 之前**：`scripts/privacy-check.mjs`（`npm run check:privacy`）扫描 tracked 文件里的 `$HOME` 绝对路径、用户名、主机名；`.githooks/pre-commit` 以 `--staged` 在同一道闸上拦截（每 clone 启用一次：`git config core.hooksPath .githooks`）；`npm test` 另有一条断言**直接扫 tracked 树**，不依赖 hook 是否启用。
 - **写文档时的纪律**：不要把含本机绝对路径的**原始输出**粘进 spec/README/CHANGELOG（真机证据改写为 `~`、`/Users/<user>` 或占位符）；发布前的 `git grep` 只是兜底，不是主防线。
+- **已知盲点（2026-09-23）**：本闸扫的是 **`$HOME` 绝对路径 / 用户名 / 主机名**，所以**相对形式的 link 条目会漏过**——实例：`package-lock.json` 曾把 `@deepseek-ai/schemastery` 记成指向本机全局 npm 布局的**相对** link，不含绝对路径却同样把仓库绑死在本机（clone 后 `npm ci` 断链；已修）。**改 lockfile / 依赖声明时人工核对 `"link": true` 与含 `../` 的 `resolved`。**
 
 **Contributors 与致谢（All Contributors 精神）**
 - `package.json contributors` = 代码/方法实际贡献者（包作者元数据）。
