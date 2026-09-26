@@ -23,6 +23,8 @@ const PATCH = join(ROOT, 'patches', 'dsh-permission-preset-icon.mjs')
 const HOST_PKG = 'dsh-permission-presets'
 const CLIENT_PKG = 'dsh-client-ui-permission-presets'
 const BACKUP_SUFFIX = '.pre-dsh-automode-icon.bak'
+/** Marker the patch leaves in a patched client bundle. */
+const CLIENT_MARKER_TEXT = 'dsh-automode: icon patch'
 
 /** Minimal stand-in for `dsh-permission-presets/lib/index.js` (0.1.7-rc.2 shape). */
 const HOST_PRISTINE = `import z from "@deepseek-ai/schemastery";
@@ -389,8 +391,15 @@ const realArtifacts = () => {
 					[CLIENT_PKG]: { file: join('lib', 'client.js'), version: real.version, content: clientBytes },
 				},
 			})
-		const hostBytes = readFileSync(real.host, 'utf8')
-		const clientBytes = readFileSync(real.client, 'utf8')
+		// The install this test reads is the developer's own and may already be
+		// patched (that is the normal state after following the README): the
+		// backup sidecar, when present, is the pristine original.
+		const pristineOf = (file) => {
+			const backup = `${file}${BACKUP_SUFFIX}`
+			return existsSync(backup) ? readFileSync(backup, 'utf8') : readFileSync(file, 'utf8')
+		}
+		const hostBytes = pristineOf(real.host)
+		const clientBytes = pristineOf(real.client)
 
 		const home = scratch(hostBytes, clientBytes)
 		const first = run(home)
@@ -398,7 +407,10 @@ const realArtifacts = () => {
 		const clientCheck = nodeCheck(clientPath(home))
 		record(
 			'real artifacts: patch applies, both files parse, exit 0',
-			first.code === 0 && hostCheck.ok && clientCheck.ok,
+			first.code === 0 &&
+				hostCheck.ok &&
+				clientCheck.ok &&
+				readFileSync(hostPath(home), 'utf8').includes('icon: z.string()'),
 			first.code === 0 ? hostCheck.detail || clientCheck.detail || undefined : `exit=${first.code}\n${first.out}`,
 		)
 
@@ -419,6 +431,20 @@ const realArtifacts = () => {
 				!existsSync(`${clientPath(home2)}${BACKUP_SUFFIX}`) &&
 				missed.out.includes('ANCHORS NOT FOUND'),
 			`exit=${missed.code}`,
+		)
+
+		// Whatever state the developer's own install is in, the script must agree
+		// with it instead of rewriting or refusing it.
+		const liveAlreadyPatched = readFileSync(real.client, 'utf8').includes(CLIENT_MARKER_TEXT)
+		const liveHome = scratch(readFileSync(real.host, 'utf8'), readFileSync(real.client, 'utf8'))
+		const liveRun = run(liveHome)
+		record(
+			`live install as-is (${liveAlreadyPatched ? 'already patched' : 'pristine'}): reported as such, exit 0`,
+			liveRun.code === 0 &&
+				(liveAlreadyPatched
+					? (liveRun.out.match(/already patched/g) ?? []).length === 2
+					: (liveRun.out.match(/patched  /g) ?? []).length === 2),
+			`exit=${liveRun.code}`,
 		)
 	}
 }

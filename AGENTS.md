@@ -40,7 +40,9 @@ src/
   classifier.ts       两阶段分类器（预筛 + 结构化裁决 + 鲁棒解析 + 裁决缓存签名）
   prompt.ts / rules.ts / cache.ts / breaker.ts / bridge.ts / permission-state.ts / config.ts / log.ts
 lib/                  构建产物（**入库**，运行时读这里）
-scripts/              smoke / bridge-flow / compose-entries / path-trust / privacy-check / release-notes / e2e（含 e2e-v4-migration）
+scripts/              smoke / patch-icon（图标补丁自测）/ bridge-flow / compose-entries / path-trust /
+                      privacy-check / release-notes / e2e（含 e2e-v4-migration）
+patches/              可选的本地补丁脚本（**随 npm 包发布**）：dsh-permission-preset-icon.mjs 让权限选择器读预设 icon
 ```
 
 ## 命令
@@ -48,7 +50,9 @@ scripts/              smoke / bridge-flow / compose-entries / path-trust / priva
 ```bash
 npm run build         # src → lib；**lib/ 入库，改 src 后必须 build 并一起提交**
 npm run typecheck
-npm test              # smoke：含 README 政策措辞守卫 + CHANGELOG 当前版本段守卫 + Release notes 双语断言 + tracked 树隐私断言
+npm test              # smoke（含 README 政策措辞守卫 + CHANGELOG 当前版本段守卫 + Release notes 双语断言 +
+                      # tracked 树隐私断言）+ 补丁自测（scripts/patch-icon.test.mjs）
+npm run test:patch    # 单独跑补丁自测：合成 fixture + 本机真实 0.1.7 产物副本（apply/幂等/node --check/篡改红对照）
 npm run test:flow     # approval 桥接流程
 npm run test:compose  # 复合命令写目标提取
 npm run test:pathtrust

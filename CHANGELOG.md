@@ -7,6 +7,18 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ### Changed
 - (track upcoming changes here; moved into a dated version section at release time — Keep a Changelog)
 
+## [0.16.0] — 2026-09-26
+
+### Added
+- **The shipped permission-picker icon patch now supports `dsh` 0.1.7-rc.2.** On that line the picker lives in a different client package and the host preset schema changed, so the previous script matched nothing there and reported anchors missing instead of rendering the bolt. It now accepts `icon` in the host preset schema, forwards it to the client catalog, and draws that SVG path inside the design set's shield in the client bundle.
+- **Patch runs are safe by construction.** Every anchor is checked before anything is written, so a file whose anchors no longer match is reported and left byte-identical; each rewritten file keeps a `<file>.pre-dsh-automode-icon.bak` copy to roll back with; re-running is a no-op; a pre-existing unrecognized injection is refused instead of stacked; older 0.1.x lines are skipped with a note. `--profile <name>` also accepts `--profile=<name>`, and bad usage exits 2.
+
+### Changed
+- The icon patch targets the 0.1.7 line. On 0.1.5/0.1.6 it reports and skips rather than guessing — the 0.15.4 package still carries the script for that line. The README states the boundary, the rollback and the test coverage.
+
+### Notes
+- Plugin runtime behaviour is unchanged (`src/` and `lib/`); this release refreshes the optional helper script, its self-test and the docs.
+
 ## [0.15.4] — 2026-09-23
 
 ### Fixed
@@ -114,6 +126,18 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [Unreleased]
 
 （发布前在此跟踪变更；发布时移入带日期的版本段——Keep a Changelog）
+
+## [0.16.0] — 2026-09-26
+
+### 新增
+- **随包发布的权限选择器图标补丁现在支持 `dsh` 0.1.7-rc.2。** 这一代把选择器搬到了另一个客户端包、宿主预设 schema 也变了，旧脚本在那里锚点全不命中，只会报「找不到锚点」而画不出闪电。现在它让宿主预设 schema 接受 `icon`、把它透传给客户端目录，并在客户端 bundle 里把该 SVG 路径画进设计集的盾牌轮廓内。
+- **补丁运行自带安全约束。** 先做全量锚点预检再写文件，锚点对不上的文件会被报告并**逐字节保持原样**；每个被改写的文件旁留一份 `<文件名>.pre-dsh-automode-icon.bak` 供回滚；重跑是空操作；若已有别的注入则拒绝叠加；更早的 0.1.x 版本线只标注跳过。`--profile <name>` 同时接受 `--profile=<name>`，参数错误以退出码 2 结束。
+
+### 变更
+- 图标补丁只针对 0.1.7 这一代。在 0.1.5/0.1.6 上它会报告后跳过、不猜不硬塞——那两代可继续用 0.15.4 包里的旧脚本。README 写明了版本边界、回滚方式与测试覆盖。
+
+### 说明
+- 插件运行时行为不变（`src/` 与 `lib/` 未改）；本次只更新了可选辅助脚本、它的自测与文档。
 
 ## [0.15.4] — 2026-09-23
 
