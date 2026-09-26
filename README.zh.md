@@ -72,8 +72,10 @@ node patches/dsh-permission-preset-icon.mjs
 **先弄清你在接受什么。** 这个补丁改的是 **`node_modules` 里的文件**（宿主预设 schema 与客户端 bundle），所以它以独立脚本形式提供、而不在安装时自动执行：
 
 - **它只是外观。** 闪电渲染与否，`auto-mode` 行为完全一致。不在意就别跑。
-- **每次 `npm update @deepseek-ai/dsh` 或重装插件都会把它冲掉** —— 之后重跑一次即可。它不会「打一半」：锚点对不上的文件会被明确报告并**保持原样**。
-- 它针对 DSH 0.1.5 这一代。将来 DSH 若原生支持预设 `icon`，删掉脚本即可。
+- **每次 `npm update @deepseek-ai/dsh` 或重装插件都会把它冲掉** —— 之后重跑一次即可。它不会「打一半」：先做全量锚点预检，锚点对不上的文件会被明确报告（`ANCHORS NOT FOUND`）并**逐字节保持原样**。
+- **回滚就是抄回备份。** 每个被改写的文件旁边都先留一份 `<文件名>.pre-dsh-automode-icon.bak`；重跑是空操作（报 `already patched`）。
+- **它针对 DSH 0.1.7-rc.2 这一代。** 更早的 0.1.x 行会被标注后跳过（那几代的权限选择器在另一个包里，锚点不可能命中）。更新的版本仍会按锚点尝试——失配则文件逐字节不动、报告点名是哪一处锚点没中。将来 DSH 若原生支持预设 `icon`，删掉脚本即可。
+- `npm run test:patch`（已并入 `npm test`）用合成 fixture 覆盖 apply / 幂等 / dry-run / 锚点失配 / 外来注入拒绝 / 参数错误；本机存在 0.1.7 安装时，还会**拿真实产物的副本**跑一遍（两个补丁产物都过 `node --check`）。
 
 
 ## 命令
@@ -193,7 +195,7 @@ pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来�
         icon: '<你的-svg-path-d>'   # 默认 bolt：'M9.15 3.4L5.85 8.55H7.95L7.05 12.6L10.45 7.25H8.25L9.15 3.4Z'
 ```
 
-图标只是**外观**——无论是否渲染，行为完全一致。它只在支持读取预设 `icon` 的 DSH 上显示（原生 DSH 会忽略；随包提供的 [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) 可开启 —— 见[安装](#可选权限选择器里的--图标)）。不设 `icon` 即用默认 bolt。
+图标只是**外观**——无论是否渲染，行为完全一致。它只在支持读取预设 `icon` 的 DSH 上显示（原生 DSH 会忽略；随包提供的 [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) 可开启 —— 见[安装](#可选权限选择器里的--图标)）。渲染位置是选择器菜单与当前值触发器；设置页的「新会话默认预设」那一行只显示文字。不设 `icon` 即用默认 bolt。
 
 ### 两阶段分类器
 

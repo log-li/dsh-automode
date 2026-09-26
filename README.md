@@ -72,8 +72,10 @@ Then restart `dsh web`.
 **Know what you are opting into.** The patch edits files **inside `node_modules`** (the host preset schema and the client bundle), which is why it ships as a separate script rather than running on install:
 
 - **It is cosmetic.** `auto-mode` behaves identically whether the bolt renders. Skip it if you do not care.
-- **Every `npm update @deepseek-ai/dsh` or plugin reinstall wipes it** — re-run the script afterwards. It never half-applies: an anchor that no longer matches is reported and that file is left untouched.
-- It targets the DSH 0.1.5 line. If a future DSH supports preset `icon`s natively, delete the script.
+- **Every `npm update @deepseek-ai/dsh` or plugin reinstall wipes it** — re-run the script afterwards. It never half-applies: every anchor is checked first, and a file whose anchors no longer match is reported (`ANCHORS NOT FOUND`) and left byte-identical.
+- **Rollback is a file copy.** Each file it rewrites is backed up first as `<file>.pre-dsh-automode-icon.bak` next to the original; re-running is a no-op (`already patched`).
+- **It targets the DSH 0.1.7-rc.2 line.** Older 0.1.x lines are skipped with a note (their picker lives in a different package, so the anchors can never match). A newer release is tried against the anchors — if they miss, its files stay byte-identical and the report names the anchor that missed. If a future DSH supports preset `icon`s natively, delete the script.
+- `npm run test:patch` (part of `npm test`) covers apply / idempotency / dry-run / anchor-miss / foreign-injection / bad usage against synthetic fixtures, and — when a 0.1.7 install exists — against copies of the real artifacts (`node --check` on both patched files).
 
 
 ## Commands
@@ -193,7 +195,7 @@ The `auto-mode` preset ships a bolt glyph in the permission picker. Set your own
         icon: '<your-svg-path-d>'   # default bolt: 'M9.15 3.4L5.85 8.55H7.95L7.05 12.6L10.45 7.25H8.25L9.15 3.4Z'
 ```
 
-The icon is **cosmetic** — behavior is identical whether it renders. It shows only on DSH versions that read preset `icon`s (stock DSH ignores it; the patch shipped in [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) enables it — see [Install](#optional-the--glyph-in-the-permission-picker)). Leave `icon` unset for the default bolt.
+The icon is **cosmetic** — behavior is identical whether it renders. It shows only on DSH versions that read preset `icon`s (stock DSH ignores it; the patch shipped in [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) enables it — see [Install](#optional-the--glyph-in-the-permission-picker)). It renders in the picker menu and the current-value trigger; the General-settings default row is text-only. Leave `icon` unset for the default bolt.
 
 ### Two-stage classifier
 

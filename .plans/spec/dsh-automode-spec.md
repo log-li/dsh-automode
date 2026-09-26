@@ -512,6 +512,20 @@ src/
 
 ## 变更历史
 
+### 未发布（2026-09-26）：0.1.7-rc.2 权限预设图标补丁适配（已实现并验证）
+
+- **范围**：只改 `patches/dsh-permission-preset-icon.mjs`（0.1.7-rc.2 双半边重写）+ 新增 `scripts/patch-icon.test.mjs`（已并入 `npm test`）+ README 双语措辞。**插件运行时行为（`src/` / `lib/`）零改动**，因此不发版、不动 CHANGELOG；补丁脚本随 `files` 发布，下次发版自然带走。
+- **审计结论（逐条读码核实，修正 2026-09-25 的保守判断）**：旧补丁的确失效（客户端目标包已搬走、宿主 schema 缩进 3→4 tab）；**typert 线上不需要任何改动**——`permissionPresets.catalog` 的 descriptor 既无 `encode` 也无 `decode`，宿主 `encodeRpcResult`（`codec.encode?.(…) ?? value`）与客户端（`descriptor.result.decode !== void 0 ? … : result.value`）都原样放行，`icon` 直接过线。**这条「线上无需改」的判断后来被活体 E2E 反向证实**：没碰任何 typert/API 文件，客户端就拿到了宿主声明的 `icon`。
+- **实现要点**：
+  - 宿主：preset schema 加 `icon: z.string()`（schemastery，**不能写 `.optional()`**）+ `optionOf()` 透传（`...spec.icon !== void 0 ? { icon: spec.icon } : {}`）。
+  - 客户端：新增 `optionGlyph(option)`，`icon` 为非空字符串时渲染**自带**的 16×16 `svg`——外框是**逐字节取自本代设计集**的 shield path（`M6.59624 2.14853…`，`stroke: currentColor`、`strokeLinejoin: round`、`stroke-width: 1`，与内置 PermissionIcon 外观一致），内层是 `icon` 的填充 path；否则回退 `permissionGlyph(option.value)`。菜单行与当前值触发器两处调用点改为 `optionGlyph(整条 option)`；`optionGlyph(undefined)`（`currentValue === 'custom'` 时会发生）安全返回 undefined。
+  - 运行期纪律：`--dry-run` / `--profile`（含 `--profile=x`）/ 未知参数报错退出 2；逐文件**全锚点预检后才写**（任一失配则该文件逐字节不动、退出 1）；写前备份 `<file>.pre-dsh-automode-icon.bak`；marker 幂等；对「已存在别的注入」（`shieldOutline` 或非本补丁的 `optionGlyph`）**拒绝写入**；0.1.7 之前的版本线**只标注跳过**（exit 0），更新的版本仍按锚点尝试。
+  - 报告与去重：target 一律按 **realpath** 呈现并按 realpath 去重——本机 `profiles/peakrate-test/node_modules/@deepseek-ai` 是指向 web 的符号链接，若不解析就会把「同一个文件的另一个入口」当成第二个目标（曾把宿主半边误指向真实文件）。
+- **活体 E2E（隔离实例，`HOME` + `DSH_HOME` 都在 `/tmp`，profile 由在用 web profile 用 APFS clonefile 克隆）**：真实 `dsh web` 启动**零 warning**；无头 Chromium 驱动真实 UI（`?token=` 握手 + 真实 composer）—— **红**：Auto mode 菜单行与触发器都无 glyph；**绿**：两者都是 `[shield, bolt]`（`path d` 前缀逐字断言），三个内置图标与原生 Auto review 行不回归；**回滚红对照**：把 `.bak` 抄回 → 重启 → 闪电消失（证明渲染确实由本补丁产生）；**补丁幂等**：隔离树二次运行报 `already patched`；**服务端产物**：`/plugins/??…` 返回的整包 bundle 含本补丁 marker，且该组 URL 的 `rev` 随内容变化（缓存自动失效）；`console`/`pageerror`：绿态与第二次红态均为 **0**（首次冷启动红态曾出现一次 React #130「slot entry crashed in conversation.input.model」，第二红态字节完全相同的未补丁产物不再复现 ⇒ 判定为冷启动竞态、与补丁无关，如实记录）。
+- **独立模型家族 review（与主模型不同厂商）**：无【严重】级问题。逐条核验后**采纳并修复**：【中等】测试不解析产物 → 新增 `node --check` 断言 + **真实产物副本**的 apply/幂等/篡改红对照三连测；【中等】`--profile` 裸旗标静默失效 → 参数校验（缺值/未知参数 exit 2）；【中等】脚本头「其它版本一律 fails the preflight」与实现不符 → 措辞改为「更早版本标注跳过 / 更新版本按锚点尝试、失配则只报告」；【中等】用户 hook 跑的 `~/.dsh/patches` 副本是 0.1.5 代脚本（postinstall 的图标步骤实为死代码）→ 见「落地动作」；【轻微】`findTargets` 注释的链接层级、测试 5 两个 legacy 触发未独立断言、`process.exit` 可能截断管道输出 → 全部修掉。**拒绝 0 条**（无与项目既定设计冲突的发现）。
+- **落地动作（需用户在 workspace 外确认）**：`~/.dsh/apply-dsh-patches.sh` 改为「跑插件随包副本」（link 安装时即仓库同一份，**天然不代际漂移**）并退役 `~/.dsh/patches/dsh-permission-preset-icon.mjs`；在用 web profile 的 node_modules 应用本补丁（重启 `dsh web` 后闪现）。两处都在 session workspace 之外，自动审批拒绝了写入，已交用户确认；未确认前**不得**声称线上已生效。
+- **验证边界（如实标注）**：活体 E2E 覆盖 = 隔离实例的真实宿主启动 + 真实模块加载 + 真实浏览器渲染 + 服务端产物字节；**未覆盖** = 官方 Desktop（预期降级：核心插件正常但无图标）、真实 `npm update @deepseek-ai/dsh` 重装路径（用「恢复 pristine 字节」模拟）、以及上条「落地动作」两项（未获授权前）。
+
 ### v0.15.4（2026-09-23，已完成）
 
 - **来源**：issue [#3](https://github.com/log-li/dsh-automode/issues/3)（2026-09-22，外部报告）——「Auto Mode 注入的消息用了插件自有的 source kind，DSH session format v4 拒绝非 producer 自有的 durable 消息来源，导致 step 失败/会话历史不可读」。**核实结论：真问题**（非误报），但影响面限于 `dsh ≥ 0.1.7-alpha.1`（dist-tag `alpha`），`0.1.7` 转 stable 即影响全部用户。
