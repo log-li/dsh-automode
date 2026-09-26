@@ -100,7 +100,9 @@ npm run release:notes
 git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z
 ```
 
-`.github/workflows/release.yml`：build + smoke + bridge-flow 全过 → `npm publish` → 自动创建
-GitHub Release（notes 由 `scripts/release-notes.mjs` 从 CHANGELOG 抽取，双语）。
-发布前置：CHANGELOG 两个半区定稿（去掉 `unreleased`）+ 独立 review 完成 + README/CHANGELOG 与实现逐段对齐。
+`.github/workflows/release.yml`：**CI 刻意不装依赖、不跑构建/测试**（本仓 peer 依赖宿主私有包，
+公共 registry 装不上）→ 只断言 `lib/index.js` 与 `CHANGELOG.md` 存在 → `npm publish --provenance --ignore-scripts`
+→ 自动创建 GitHub Release（notes 由 `scripts/release-notes.mjs` 从 CHANGELOG 抽取，双语）。
+**因此质量门全在本机**：发布前置 = `npm run build` 后 `lib/` 入库 + `npm test`（smoke + 补丁自测）绿 +
+独立模型家族 review 完成 + CHANGELOG 两个半区定稿（去掉 `unreleased`）+ README/CHANGELOG 与实现逐段对齐。
 详见 spec §发布流程。
