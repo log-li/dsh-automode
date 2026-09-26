@@ -119,6 +119,26 @@ src/
 - `cordis.patch.yml` 的 `presets.auto-mode` 声明 `icon`（内层 SVG path `d`，bolt）；是否渲染取决于 DSH 是否支持消费预设 `icon`（原生 DSH 硬编码 glyph 映射、会静默忽略；本机 DSH 经 `dsh-permission-preset-icon.mjs` 补丁支持）。图标纯外观，不渲染时行为不变。
 - **⚠️ schemastery 坑**：`dsh-permission-presets` 的 config schema 用 schemastery（非 zod），其 `Schema` **没有 `.optional()`**（只有 `.required()`/`.default()`），且 `z.object` 字段**默认可选**——补丁必须写 `icon: z.string()`，写 `.optional()` 会让 `static Config = z.object(...)` 在模块加载时抛错，拖垮整个 plugin tree。
 
+#### DSH 0.1.7-rc.2 权限预设图标适配（2026-09-25 审计；本轮落地）
+
+- **支持边界**：`@log.li/dsh-automode` 的核心审批逻辑在 `dsh 0.1.7-rc.2` 正常加载（本机 Desktop live inventory 已确认 bundle `auto-mode` 为 `installed: true / enabled: true`）。**权限预设 `icon` 补丁本轮适配到 0.1.7-rc.2**（补丁只改 `node_modules` 里两个产物文件，纯外观：不渲染时审批行为完全不变）。
+- **旧补丁（0.1.5 线）在新宿主上为什么不能直接用**（逐条读码 / 实测核实）：
+  - 宿主包仍是 `@deepseek-ai/dsh-permission-presets`，但**客户端权限选择器已搬到** `@deepseek-ai/dsh-client-ui-permission-presets`；旧补丁的客户端目标写的是 `dsh-client-ui-conversation`（该包已不含选择器，锚点也失配）。
+  - 0.1.7-rc.2 宿主 Config schema（`lib/index.js` 的 `static Config`）**没有 `icon`**，`optionOf()` 也不透传；schema 内层缩进由 3 tab 变 4 tab → 旧锚点失配。
+  - **陷阱（关键修正）**：客户端 `permissionGlyph(value)` 的 Map 型函数体在 0.1.7-rc.2 **仍然原样存在**，旧补丁「插到它后面」的那条锚点其实还命中——所以**只把旧补丁的客户端包名改成新包**，它会注入引用 `shieldOutline` 的 `optionGlyph`；该符号在当前 `dsh-client-ui-primitives` 中已不存在，一旦某个 preset 真的带 `icon`（即宿主半边也打上时）就在渲染期抛 `ReferenceError`。客户端半边必须整体重写。
+  - 当前客户端图标来自 `dsh-client-ui-primitives` 的 `PermissionIcon*Regular` React 组件（16×16 viewBox、`stroke: currentColor`、组件内不含 `shieldOutline`）；产物里没有 `optionGlyph`。
+- **线上（typert 远程调用）不需要改**（本轮核实，**修正** 2026-09-25 审计里「要同步 `PresetSpec`/`PresetOption`」的保守表述）：
+  - `permissionPresets.catalog` 的 descriptor 只声明 `{ mode: 'strict', typeSymbol, create }`，**既无 `encode` 也无 `decode`**：宿主 `encodeRpcResult` 用 `codec.encode?.(…) ?? value`，客户端 `dsh-api-gateway/lib/client.js` 用 `descriptor.result.decode !== void 0 ? decode(…) : result.value` —— 两处都不套用 `create` schema，多出的 `icon` 字段**原样过线**。
+  - 因此 `typert.host.js` / `typert.remote-client.js` / `dsh-api-remotes` 内联 schema **都不用改**（它们是 `PresetOption` 的 wire 形状声明，本调用路径不消费 `icon` 的校验）。`PresetOption` 类型也只影响 TS 类型面，运行时无关。
+- **目标实现（本轮落地，见 `patches/dsh-permission-preset-icon.mjs`）**：
+  1. **只支持 node_modules 可写的 profile**：目标 = `<root>/@deepseek-ai/dsh-permission-presets/lib/index.js`（宿主）+ `<root>/@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js`（客户端）；`<root>` 由 `~/.dsh/profiles/*/node_modules` 与全局安装路径**发现**（不硬编码 profile 名）。官方 Desktop 的 DSH 在已签名 `DeepSeek Harness.app/Contents/Resources/app.asar` 内，**不修改、不重签、不注入**；Desktop 要显示图标只能等上游原生支持。
+  2. **宿主半边**：preset schema 增加 `icon: z.string()`（schemastery，**不能写 `.optional()`**，见上）；`optionOf()` 增加 `...spec.icon !== void 0 ? { icon: spec.icon } : {}` 透传。
+  3. **客户端半边**：新增 `optionGlyph(option)`——`option.icon` 是非空字符串时渲染**自带的 16×16 `svg`**（外框 = 从 0.1.7-rc.2 设计集里抄来的 shield 轮廓 path 字面量，`stroke: currentColor`；内层 = `option.icon` 的填充 path），否则回退 `permissionGlyph(option.value)`；菜单行（`catalog.options.map` 里的 `const icon = …`）与当前值触发器（两处 `permissionGlyph(currentValue)`）都改用 `optionGlyph(整条 option)`。**不引用任何 primitives 私有符号**。设置页 `PermissionRow`（新会话默认预设）本来就只渲染文本标签、不渲染 glyph → 不改。
+  4. **补丁运行器**：先对每个目标文件做**全量锚点预检**、全命中才写（任一失配则该文件一字不动）；写前留 `<file>.pre-dsh-automode-icon.bak` 备份、写完留幂等 marker（重跑报 `already patched`）；支持 `--dry-run` / `--profile <name>`；逐文件报告 `patched / already / anchor-missing(哪一处)`；有失配时**退出码非 0**，由 `apply-dsh-patches.sh` WARN-skip，不让 postinstall 失败。
+- **版本边界（刻意收窄）**：锚点只针对 **0.1.7-rc.2 这一代**；其它版本（含 0.1.5 线、以及将来重构过的版本）一律**只报告失配、保持原文件不动**（不猜、不硬塞）。0.1.5 线用户仍可用 npm 0.15.4 随包发布的旧补丁。
+- **验证门禁（本轮结果见变更历史）**：① 隔离实例（`HOME` 与 `DSH_HOME` 都在 `/tmp`，profile 由在用 web profile 克隆）启动零 warning；② 权限菜单与当前值触发器都渲染 Auto mode 闪电；③ 三个内置权限图标不回归；④ 切换 preset 后重开菜单仍一致；⑤ 真实（无头）浏览器 `console` / `pageerror` 为 0；⑥ **红对照**：把锚点人为改坏 → 补丁只报告、文件字节不变。Desktop 只能验证「核心插件正常 + 图标仍不显示」的预期降级，不得当作补丁成功。
+- **源文件纪律**：仓库 `patches/dsh-permission-preset-icon.mjs` 是唯一 source of truth；`~/.dsh/patches/dsh-permission-preset-icon.mjs` 只是运行期副本（`~/.dsh/apply-dsh-patches.sh` 调它），**改仓库后必须同步副本并重跑**，否则 postinstall 打的是旧脚本。
+
 #### allowPath 白名单语义
 - `config.allowPaths` 即**全信任**：其中文件工具（`targetPaths`）与 bash 写命令（`bashWriteDestinations` 提取的目标）经真实 symlink-resolve 前缀匹配命中 → 跳过分类器（`curated allowPath`）。
 - **bash 写命令覆盖**（2026-08-29）：`cp/mv/rsync/ditto/install/tar -x(-C)/unzip(-d)/unar(-d)/curl -o/wget -O/git clone` 等非复合写命令提取目标目录/文件路径。
