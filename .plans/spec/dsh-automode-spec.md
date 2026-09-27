@@ -104,7 +104,7 @@ src/
 #### 用户意图
 - 分类器经 `<recent_user_intent>`（`renderUserIntent`）读取用户**最近的显式指示**，作为「合法性」强信号；但硬安全边界（泄密/破坏/自身提权沙箱）仍优先。
 - **只保留 `source.kind === 'user'` 的人类消息**（排除 tool/plugin/system/model 注入），保证用户授权原话稳定进入意图窗口。
-- **工具型授权**（2026-08-31）：`ask_user_question` 的答案（`!isError` 的 tool-result，解析 `answers[].selected/custom`）也渲染为 `user:` 意图行——用户经工具授权后意图 hash 变化 → 缓存签名变化 → 旧 DENY 缓存 miss → 分类器以新授权上下文重跑。错误结果（isError，如用户取消）不算授权。
+- **工具型授权**（2026-08-31；**v0.16.1 信封无关**）：`ask_user_question` 的答案也渲染为 `user:` 意图行——**读取形态与宿主版本无关**：v3 宿主（≤ 0.1.6）把它写成 `role:'user'` + `source.kind:'tool'` + `tool-result` 块（块内 `toolCallId` + 嵌套 `content`），v4 宿主（≥ 0.1.7-rc.2）写成 `role:'tool'` + `source.callId`/顶层 `toolCallId` + **纯 text 块**（答案是 JSON 字符串）。两种形态都认，判定恒为「callId 反查工具名 == `ask_user_question` 且非错误结果」；解析 `answers[].selected/custom`。用户经工具授权后意图 hash 变化 → 缓存签名变化 → 旧 DENY 缓存 miss → 分类器以新授权上下文重跑。错误结果（isError，如用户取消）不算授权。
 - **意图进缓存签名**（2026-08-29）：`VerdictCache.sig` 追加 `|intent:<hash>`；`renderUserIntent` 在缓存检查**之前**执行。新用户授权 → hash 变化 → 缓存 miss；同一意图窗口内的重复命令仍命中缓存。
 
 #### 分类器诊断
@@ -252,6 +252,31 @@ src/
 - 不升 major 的理由：单次兼容修复对使用者零行为变化；1.0.0 的时机由 dsh 内核 stable 驱动，不由单次兼容修复驱动。
 
 ## 已知问题 / 待办
+
+- **★ `ask_user_question` 的答复在 `dsh ≥ 0.1.7-rc.2` 上不再进入分类器意图窗口 → 用户经由该工具给出的授权对闸门不可见**（2026-09-28 实测复现，**v0.16.1 已修复**；与 issue #3 同族：都是 session format v4 换形后插件仍在读 v3 信封）
+  - **症状**：用户在 `ask_user_question` 里明确选了「确认执行」（答复原话记入会话），随后的提权 bash 仍被 `pre-execute-deny` 拒，理由为 **「The user only asked why OpenClaw is stuck; they did not authorize …」** —— 分类器看到的是**更早那条原始提问**，看不到刚发生的确认；连续两次同样被拒（改过措辞、改过命令，均拒）。
+  - **根因（两条，互相独立，都在 `classifier.ts`）**：v4 宿主把工具结果从「OpenAI 信封」改成了**原生 tool 消息**，而意图窗口只认旧信封。
+    | | v3（≤ 0.1.6，本机 2026-09-16 会话实测） | v4（≥ 0.1.7-rc.2，本机 2026-09-28 实测） |
+    |---|---|---|
+    | 工具结果 `message.role` | `'user'` | **`'tool'`** |
+    | 内容块类型 | **`tool-result`**（`toolCallId` + 嵌套 `content`） | **纯 `text`** 块 |
+    | 调用关联 | 块内 `toolCallId` | `message.source.callId` + 顶层 `toolCallId` |
+    ① `renderUserIntent`（`classifier.ts:427-457`）在循环开头就有 `if (m.role !== 'user') continue`，**读完 role 就跳过了 `role:'tool'` 的消息** —— 后面那段专门处理 `srcKind === 'tool'` 的「答复算意图」分支在 v4 上**永远不会被执行**（死代码）。
+    ② 即使跳过 role 检查，`hasAskUserAnswer`（`classifier.ts:325-333`）要求内容块 `b.type === 'tool-result'` 且 `toolNames.get(b.toolCallId)` 命中；v4 的工具结果**没有任何 `tool-result` 块**（本机全会话普查：`{text:82, reasoning:42, tool-call:72}`，`tool-result` = **0**），且 callId 搬到了 `source.callId` / 顶层字段 → 判定恒为 false。
+  - **后果**：① 工具中介的授权通道**整条失效**（fail-closed 方向，不误放，但用户「我确认了」在闸门侧不存在）；② `intentHash`（M-34 缓存键成分）在答复后**不变** → 陈旧 DENY 可吞掉新鲜的工具授权；③ 直接人话（`role:'user'` + `source.kind==='user'`）不受影响 —— 所以表现为「用户直接在对话里说就管用，勾选项不管用」，极易被误读成模型不听话。
+  - **实测证据**（session-38670fd9，2026-09-28 00:08 HKT）：`seq 217/218` 记录 `ask_user_question` 调用与答复（`{"answers":[{"id":"confirm_cmds","selected":["确认，按这四条执行"]}]}`）落在 **00:08:50**；**8 秒后**（00:08:58）的提权 bash 仍被拒，`decisions.jsonl` 的 reason 明说「用户只问了为什么」。答复消息形态：`role:'tool'`、`source:{kind:'tool',callId}`、`content:[{type:'text',text:'{"answers":…}'}]`。
+  - **修复方向**：意图窗口**同时认两种形态**——(a) `role:'tool'`（或保留的旧 `role:'user'`+`kind:'tool'`）且 callId 对应工具名为 `ask_user_question` 的消息；(b) 答复载荷从 `tool-result` 块**或** text 块（JSON 字符串）里取。**不变的硬约束**：只有 callId 映射到 `ask_user_question` 的结果才算授权 —— 普通工具输出、插件注入、模型消息依旧**永远不能**授权（v0.15.1 的立场），否则等于把工具输出变成提权通道。
+  - **回归测试要求**：两种信封各一份**真实抓取的 fixture**（v3 形态 / v4 形态），断言两者的 `renderUserIntent` 输出都含答复行、且 `intentHash` 随答复变化；再加一份「普通工具输出（非 ask 工具）」的反向断言，防止放宽成「任何 tool 消息都算授权」。测试须同时覆盖 `src/` 与 `lib/`（防源码改了产物没重建）。
+  - **修复实现（v0.16.1，`src/classifier.ts`）**：意图窗口改为**信封无关**的两条通道，其余语义一字不动。
+    1. **直接人话**（通道一）：`role:'user'` 且 `source.kind === 'user'`，或 `source` 整个缺失（老宿主兜底）——**与修复前完全一致**。
+    2. **工具型授权**（通道二）：消息是 **tool-result 载体**（`role:'tool'`，**或** `source.kind === 'tool'`，**或**内容含 `tool-result` 块）**且**其 callId 反查工具名为 `ask_user_question` **且**不是错误结果。
+    3. **callId 三处按序取**：`message.source.callId` → 顶层 `message.toolCallId` → `tool-result` 块的 `toolCallId`；**答复载荷**取自 `tool-result` 块的嵌套 `content`（v3）**或** text 块（其文本是答案 JSON，v4）；**错误标记**同样两种：块级 `isError`（v3，块存在时以块级为准）/ 消息级 `isError`（v4）。
+    4. **role 比较经 `as string` 放宽**：本仓 devDependency 的 `dsh-llm`（`0.1.0-rc.8`）的 `Message` 联合里**还没有 `'tool'`**（`'system' | 'user' | 'assistant'`），类型面不能假定宿主已升级；运行期按真实值比较，等价于既有的「namespace-import + 运行时探测」兼容立场。
+    5. **硬约束不变**：**只有 callId 映射到 `ask_user_question` 才算授权** —— 普通工具输出、插件注入、模型消息依旧**永远不能**授权（v0.15.1 的立场），否则等于把工具输出变成提权通道。
+  - **回归测试实现（v0.16.1，`scripts/smoke.test.mjs`）**：fixture 落在 `scripts/fixtures/`，**取证边界如实标注**——
+    - **v4 形态**：**整条逐字取自本机真实会话**（session-38670fd9 seq 216 的 assistant `tool-call` 块 + seq 218 的 `tool/result` 消息：`role:'tool'`、`source:{kind:'tool',callId}`、顶层 `toolCallId`、text 块载荷）。仅把出现的本机绝对路径替换为占位符（隐私门禁）。
+    - **v3 形态**：**真实抓取的 v3 信封 × 同一条真实答复载荷**——信封（`role:'user'` + `source.kind:'tool'` + `tool-result` 块携带 `toolCallId` + 嵌套 `content`）取自本机真实 `session.v3.jsonl.zstd` 的 `tool/result` 记录，载荷换成 v4 fixture 里那条真实答案。**不能声称整条真实抓取**的理由：本机 189 份 v3 与 392 份更早会话日志里 `ask_user_question` 命中数为 **0**（该工具在 ≤0.1.6 宿主上没有被记录过），「v3 形态的 ask 答复」在本机无原件可取证。
+    - 断言：两种信封的 `renderUserIntent` 输出都含答复行与所答问题；`hashString(renderUserIntent(...))` 在答复前后**不同**（缓存键）；**反向断言** —— 两种信封各一条**非 ask 工具**的 tool 消息都**不得**进入意图窗口（防「任何 tool 消息都算授权」）；同组断言同时跑 `src/` 与 `lib/`（结构断言钉住源码分支存在于两边，防产物没重建）。
 
 - **分类器路由解析**：`resolveRoute` 优先级为 `config.classifier → session request header → agent.options`；`classifier.provider/model` 为空时，分类器跟随会话**实际模型**（当前为 DeepSeek），而不是 agent 默认模型。若会话模型本身重/不稳定（reasoning 高开销）导致频繁 `classifier returned no verdict`，建议**固定专用分类器路由**（`classifier.provider/model` 指向支持 `reasoningEffort: off/low` 的轻量非 reasoning 模型）。
 
@@ -500,8 +525,8 @@ src/
 ## 发布流程（维护者，2026-09-12 起 Actions 自动化）
 
 1. **打 tag 前：CHANGELOG（双语单文件，**上半英文/下半中文两个半区，两半都要改**）该版本条目先把 `— unreleased` 改为发布日期**（发布即定稿，避免 tarball/Release notes 残留 unreleased；已发布包的快照不可改）。版本号就绪 + CHANGELOG 更新后：`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`（push tag 即触发 `.github/workflows/release.yml`；或 `workflow_dispatch` 手动跑当前 package.json 版本）。
-2. Actions 门禁：build + smoke 80 项 + bridge-flow 全过后 → `npm publish`（token = repo secret `NPM_TOKEN`；2027 npm 方向：改 Trusted Publishing/OIDC + `npm publish --provenance`）→ 自动创建 GitHub Release（changelog 从 CHANGELOG.md 抽取）。
-3. 前置一次性配置：GitHub repo secret `NPM_TOKEN`（npmjs 生成 Automation token），或在 npmjs Trusted Publishers 配 OIDC。
+2. **Actions（`release.yml`）刻意不装依赖、不跑构建/测试**——本仓 peer 依赖宿主私有包（如 `dsh-sandbox-policy` 的 `0.1.x` 只存在于 DSH 宿主内，公共 registry 只有 `0.0.x`），独立 CI 装不上。workflow 只**断言产物存在**（`lib/index.js` + `CHANGELOG.md`）→ `npm publish --provenance --ignore-scripts`（`--ignore-scripts` 跳过 `prepublishOnly` 的 `tsc`，否则缺 `@types/node` 会 TS2688；`lib/` 随 git 入库，发布不需要构建）→ 自动创建/更新 GitHub Release（notes 由 `scripts/release-notes.mjs` 抽取，双语）。
+3. **npm 认证 = Trusted Publishing（OIDC）**：workflow 靠 `id-token: write`，**不设** `NODE_AUTH_TOKEN`/`registry-url`（设了会退回 token 认证或 `E404`；Node 24 是 `npm ≥ 11.5.1` 的前提）。**因此质量门全在本机**：`npm run build` 后 `lib/` 入库 + `npm test` 绿 + 独立模型家族 review + 本机端到端验证（见上「E2E 门禁」）+ CHANGELOG 两半定稿。
 4. 发布前按全局规则完成 code review 后 push tag（流程见全局规则，措辞不落本公开文档）。
 5. **★ 发布前必做：语义/行为变化 → 逐段重读 README 与 CHANGELOG**（不能只改「我记得动过的那几处」）。
    2026-09-12 v0.15.1 就因此把**旧政策表述**随包发出（README 仍写 `risk-based`/`stays forbidden`，
@@ -511,6 +536,16 @@ src/
    教训：**能被测试卡住的，就不要靠记忆**；发布流程必须有一道「文档描述 == 当前行为」的机械关卡。
 
 ## 变更历史
+
+### v0.16.1（2026-09-28）：`ask_user_question` 答复在 dsh ≥ 0.1.7-rc.2 上不再进入意图窗口（已实现）
+
+- **来源**：2026-09-28 真实使用中暴露——用户在被闸门拒绝后按提示用 `ask_user_question` 明确确认了「停 launchd 网关 + 全局装 `openclaw@2026.9.6`」四条命令，**确认后那条命令仍被拒两次**，reason 只说「用户只问了为什么」。核实结论：**是真 bug**（不是分类器任性，也不是缓存）——判定输入压根没收到答复。
+- **根因与证据**：见「已知问题 / 待办 → ★ `ask_user_question` 的答复…」条目（含 v3/v4 消息形态对照表、全会话内容块普查、`seq 217/218` 与 8 秒后再次被拒的时间线）。两次拒绝的 reason 措辞不同 ⇒ **不是缓存重放**，是两次**真实的模型调用**都只看到原始提问。
+- **性质**：**宿主换形导致的兼容回归**，与 v0.15.4（issue #3）同族但层面不同 —— v0.15.4 修的是**注入消息的准入**（source kind），这一条是**读取历史消息时的信封解析**；v0.15.4 只扫了「我们写出去的消息」，没扫「我们怎么读别人（宿主）写的消息」，所以同一代宿主变更从另一个入口又漏了一次。教训：**跨版本兼容要按「双向」核对**——写出的消息形态与读入的消息形态都要过一遍真实日志对照。
+- **修复与测试**：见上文「已知问题」条目的「修复实现（v0.16.1）」与「回归测试实现（v0.16.1）」两段（信封无关的两条通道 + callId 三处取法 + 硬约束不变 + 真实 fixture 的取证边界）。落码顺序遵循「spec 先行」：本节先于代码提交。
+- **影响面（如实标注）**：直接人话授权不受影响；受影响的是**经由 `ask_user_question` 给出的授权**（本机是闸门给用户的常规建议路径 —— `prompt.ts` 明确要求「让用户用 ask_user_question 确认」，所以这条路径失效会形成「照闸门说的做，还是过不去」的死循环，属高优先级）。
+- **复现/验证配方（可复用）**：`~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd` 用 `zstd -dc` 解开 → 数各内容块类型（`tool-result` 是否为 0）+ 看工具结果消息的 `role`/`source` → 用 `lib/classifier.js` 的 `renderUserIntent(msgs, N)` 直接跑真实消息，看答复行是否出现（离线复现，无需真实闸门）。
+- **发布**：PATCH（`fix`）—— 对使用者只有一个行为变化：**经 `ask_user_question` 给出的确认重新对闸门可见**。
 
 ### 未发布（2026-09-26）：0.1.7-rc.2 权限预设图标补丁适配（已实现并验证）
 
