@@ -273,12 +273,17 @@ src/
     3. **callId 三处按序取**：`message.source.callId` → 顶层 `message.toolCallId` → `tool-result` 块的 `toolCallId`；**答复载荷**取自 `tool-result` 块的嵌套 `content`（v3）**或** text 块（其文本是答案 JSON，v4）；**错误标记**同样两种：块级 `isError`（v3，块存在时以块级为准）/ 消息级 `isError`（v4）。
     4. **role 比较经 `as string` 放宽**：本仓 devDependency 的 `dsh-llm`（`0.1.0-rc.8`）的 `Message` 联合里**还没有 `'tool'`**（`'system' | 'user' | 'assistant'`），类型面不能假定宿主已升级；运行期按真实值比较，等价于既有的「namespace-import + 运行时探测」兼容立场。
     5. **硬约束不变**：**只有 callId 映射到 `ask_user_question` 才算授权** —— 普通工具输出、插件注入、模型消息依旧**永远不能**授权（v0.15.1 的立场），否则等于把工具输出变成提权通道。
-  - **回归测试实现（v0.16.1，`scripts/smoke.test.mjs`）**：fixture 落在 `scripts/fixtures/`，**取证边界如实标注**——
-    - **v4 形态**：**整条逐字取自本机真实会话**（session-38670fd9 seq 216 的 assistant `tool-call` 块 + seq 218 的 `tool/result` 消息：`role:'tool'`、`source:{kind:'tool',callId}`、顶层 `toolCallId`、text 块载荷）。仅把出现的本机绝对路径替换为占位符（隐私门禁）。
-    - **v3 形态**：**真实抓取的 v3 信封 × 同一条真实答复载荷**——信封（`role:'user'` + `source.kind:'tool'` + `tool-result` 块携带 `toolCallId` + 嵌套 `content`）取自本机真实 `session.v3.jsonl.zstd` 的 `tool/result` 记录，载荷换成 v4 fixture 里那条真实答案。**不能声称整条真实抓取**的理由：本机 189 份 v3 与 392 份更早会话日志里 `ask_user_question` 命中数为 **0**（该工具在 ≤0.1.6 宿主上没有被记录过），「v3 形态的 ask 答复」在本机无原件可取证。
-    - 断言：两种信封的 `renderUserIntent` 输出都含答复行与所答问题；`hashString(renderUserIntent(...))` 在答复前后**不同**（缓存键）；**反向断言** —— 两种信封各一条**非 ask 工具**的 tool 消息都**不得**进入意图窗口（防「任何 tool 消息都算授权」）；同组断言同时跑 `src/` 与 `lib/`（结构断言钉住源码分支存在于两边，防产物没重建）。
+    6. **顺带加固**：意图窗口对 `content` 不是数组的消息**跳过**而不是抛错（v4 的 role 联合新增了 `'tool'` / `'developer'`，本函数要读**每一条**宿主消息；抛错会以插件错误的形式打断每一次受闸门管辖的调用）。
+  - **回归测试实现（v0.16.1，`scripts/smoke.test.mjs` + `scripts/fixtures/intent-envelopes.json`）**：**两种信封各一对真实抓取**（ask 正例 + 非 ask 反例），落码时由脚本直接从真实会话日志导出，**只把本机绝对路径替换为 `/Users/x`**，其余逐字：
+    - **v4 形态**：本机真实 v4 会话日志（**就是暴露本 bug 的那次**）—— assistant `tool-call` 块（seq 216）+ `tool/result` 消息（seq 218：`role:'tool'`、`source:{kind:'tool',callId}`、顶层 `toolCallId`、text 块载荷、消息级 `isError`）；反例 = assistant seq 276 + `tool/result` seq 278（`bash` 工具）。
+    - **v3 形态**：本机真实 v3 会话日志（session `2640f4ef…`）—— assistant `tool-call` 块（seq 158）+ `tool/result`（seq 161：`role:'user'`、`source.kind:'tool'`、`tool-result` 块携带 `toolCallId` + 嵌套 `content` + 块级 `isError`，**与宿主 v3→v4 迁移 `liftToolResult()` 的前置断言完全一致**）；反例 = assistant（`bash`）+ wrapper seq 80。
+    - 断言：两种信封的 `renderUserIntent` 都产出 `user:` 行、含答复原文**与所答问题**；`hashString(renderUserIntent(…))` 在答复前后**不同**（M-34 缓存键）；**反向断言** —— 非 ask 工具的 tool 消息（两种信封各一）都**不得**进入意图窗口；**取消/失败断言** —— 把真实答复的 `isError` 置真（v3 块级 / v4 消息级）后必须回到空窗口；**src + lib 结构断言**（两个实现文件都含 `isToolResultCarrier` / `toolResultCallId` / 新分支，且都不再含旧的 `if (m.role !== 'user') continue`）——防「源码改了产物没重建」。
+    - **取证工具陷阱（本轮实际踩到，记录以免重犯）**：**`zstdgrep` 在本机这些多帧 `.zstd` 会话日志上静默返回 0 命中**（同文件用 `zstdgrep -c 'tool-result'` 得 0、用 `zstd -dc | grep -c` 得 594）。第一轮 v3 普查因此误判「本机无任何 v3 的 ask 答复」，差点把 fixture 降级成「真实信封 × 拼接载荷」；改用 `zstd -dc | grep`（或先解压再解析 JSON）后找到了**真实完整**的 v3 ask 答复。**结论：在这种日志上做存在性判断前，必须先用已知内容做一次阳性对照**。
+  - **离线红绿对照（v0.16.1 证据）**：同一对 fixture 跑修复前的 `lib/classifier.js`（`git show HEAD:lib/classifier.js`）—— **v4 = 空窗口（红，bug 复现）**，v3 = 正常渲染（说明回归只发生在 v4 信封上）；跑本版 —— **两者都渲染出答复行（绿）**。
 
 - **分类器路由解析**：`resolveRoute` 优先级为 `config.classifier → session request header → agent.options`；`classifier.provider/model` 为空时，分类器跟随会话**实际模型**（当前为 DeepSeek），而不是 agent 默认模型。若会话模型本身重/不稳定（reasoning 高开销）导致频繁 `classifier returned no verdict`，建议**固定专用分类器路由**（`classifier.provider/model` 指向支持 `reasoningEffort: off/low` 的轻量非 reasoning 模型）。
+
+- **`lib/types/config.d.ts` 存在与本机工具链相关的类型生成漂移**（2026-09-28 独立 review 检出；低优先级，**不影响运行**）：本地 `tsc` + 已装 `schemastery 3.18.4` 重新生成时，`Config` 的 `.d.ts` 会多出 `NoInfer<…>` 包裹与三参 `z<…, "defined">` 泛型（约 158 行纯类型签名变化），而入库版本是早先工具链产物。当前**刻意不回填**（v0.16.1 是 PATCH，保持 diff 聚焦；这层只影响 TS 类型面）。处置方案二选一，留待专门一次 chore：① 在固定工具链版本下重新生成并单独提交；② 把 `lib/types/` 从公开类型面移除（`exports.types` 只指 `lib/types/index.d.ts`）。**注意**：任何一次 `npm run build` 都会重新生成该文件，提交前需有意决定是否带上。
 
 - **裁决缓存签名两侧不一致 → 审批路径二次分类，且第二次看不到命令原文**（2026-09-11 实测复现，影响 v0.12.0；**v0.13.0 已修复**，见变更历史）
   - **症状**：同一动作在 pre-execute 门被判 allow（`decisions.jsonl` 写 `pre-execute-allow`），约 2 秒后 approval 路径却写 `decision outcome:rejected`，命令最终未执行。日志呈现「先放行、后否决」的矛盾对。
@@ -546,6 +551,26 @@ src/
 - **影响面（如实标注）**：直接人话授权不受影响；受影响的是**经由 `ask_user_question` 给出的授权**（本机是闸门给用户的常规建议路径 —— `prompt.ts` 明确要求「让用户用 ask_user_question 确认」，所以这条路径失效会形成「照闸门说的做，还是过不去」的死循环，属高优先级）。
 - **复现/验证配方（可复用）**：`~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd` 用 `zstd -dc` 解开 → 数各内容块类型（`tool-result` 是否为 0）+ 看工具结果消息的 `role`/`source` → 用 `lib/classifier.js` 的 `renderUserIntent(msgs, N)` 直接跑真实消息，看答复行是否出现（离线复现，无需真实闸门）。
 - **发布**：PATCH（`fix`）—— 对使用者只有一个行为变化：**经 `ask_user_question` 给出的确认重新对闸门可见**。
+- **独立模型家族 review（与主模型不同厂商；2026-09-28）**：**无【严重】、无【中等】**。逐条核验后处理：
+  - 【轻微】**`toolResultCallId` 注释与事实不符**（称「v3 没有 message 级字段」，实际 v3 包裹消息**也**带 `source.callId`）→ **采纳**，注释改写为「`source.callId` 两代都有，顶层 `toolCallId` 只在 v4，块内 `toolCallId` 只在 v3」，并保留顺序理由（宿主转换器强制两者一致，故顺序不会分歧）。
+  - 【轻微】**`isToolResultCarrier` 放宽了载体判定**（任何含 `tool-result` 块的消息都算，不看来源）→ **采纳并收窄**：载体只认 `role === 'tool'` 或 `source.kind === 'tool'`，**裸 `tool-result` 块不再单独构成载体**。理由：修复前 v3 分支要求 `source.kind === 'tool'`，我的改法一度把「来源说是插件、却带 tool-result 块」的形态也放进来（review 判定真实宿主上不可达，但这是**我引入的放宽**，与 v0.15.1「来源在场但不是 user 即不可信」的立场不一致，收窄成本为零）→ 新增反向断言 `provenance is required for a carrier`（伪造 `plugin:…` 来源 + 真实 ask callId + 答案载荷 → 必须**不**授权；`source: {}` 同理）。
+  - 【轻微】**缺 v4 顶层 `toolCallId` 回退的测试** → **采纳**，新增一例（删掉 `source`、只留顶层字段仍须认出答复）。
+  - 【轻微】**`lib/types/config.d.ts` 的 158 行类型生成漂移**（本地 tsc/schemastery 生成物与入库版本不一致，与本次修复无关）→ **本版不回填**（保持 PATCH diff 聚焦），记为待办（见「已知问题」）。
+  - 【轻微】**fixture 的 `expectText` 是死字段 / v3 non-ask 的 assistant seq 引用不完整** → **采纳**：`expectText` 改为真断言使用，provenance 补上 `assistant/message seq 78`（同一调用的 `tool/call` 记录在 seq 79）。
+- **本轮「完整 E2E 覆盖清单」结果表（2026-09-28，隔离实例：`HOME=/tmp/<x>` 与 `DSH_HOME=/tmp/<x>/.dsh` 同时隔离）**：
+
+  | # | 链 | 结果 | 证据 |
+  |---|---|---|---|
+  | A1 | 加载 | ✅ | 隔离 profile 的 `--dump-config` 出现 `- id: auto-mode`（含 `allowPaths`）+ `presets.auto-mode`；运行期 `event:boot` 落**隔离 home** 的 `decisions.jsonl`：`dsh-automode v0.16.1 active (failClosed=true, preExecute=true)` |
+  | A2 | 进入 auto mode | ✅ | 驱动插件走真实命令路径（`ctx.commands.execute(agent, '/auto', …)`）→ `command/run`/`command/done` 记 `Auto mode enabled.`，注入以 **`{"kind":"plugin:auto-mode"}`** 落 `agent/inbox/spliced`（会话头 `version: 4`）+ `permission/preset` 记录 |
+  | A3 | deny 拦下 | ✅ | 真实调用经 `tools/pre-execute`：`pre-execute-deny` 记「matched deny pattern … cmd=\"trash /etc/hosts\"」，工具返回 isError 提示；**`/etc/hosts` mtime 未变**（目标动作确未执行） |
+  | A4 | 白名单提权桥接 | ✅ | **真回合**（模型自己请求提权）：`pre-execute-bashop(esc=true, bashDests=[/tmp/…/bridged.txt])` → `pre-execute-allow: curated allowPath` → `approval-bridge: … auto-allowed` → `decision allowed-once`；目标文件真写出（内容 = 源文件）。**零分类器、零人工** |
+  | A5 | 会话格式兼容 | ✅ | `npm run test:v4` PASS（189 个真实 v3 会话重开 + 10 条注入记录归一 + 3 次退役形态红对照） |
+  | C | **本次改动触达面：意图窗口的信封解析（离线 + 真实历史）** | ✅ | `npm run test:intent`（opt-in，新增）：用**宿主自己的 session-format catalog** 打开**真实历史**（含 v3→v4 迁移 `liftToolResult()`），把真实 `deriveMessages()` 喂给插件——5 条真实 `ask_user_question` 答复 **green 5/5 进意图窗口**，同输入喂 `v0.16.0:lib/classifier.js` **red 0/5**。另有离线红绿：HEAD 版对本机真实 v4 会话消息返回**空窗口**（红）、本版返回答复行（绿） |
+  | C | **本次改动触达面：`ask_user_question` 答复 → 提权（端到端活体复现原 bug 场景）** | ✅ | 隔离实例里跑**真实模型回合**（路由 `deepseek-official/deepseek-flash`，密钥仅存在于一次性隔离 home）：模型先调**宿主真实的** `ask_user_question`（本地应答器答「确认执行」，宿主把它记为**真实 tool 消息**），再对**白名单外**路径（`/var/tmp/auto-e2e/out.txt`）发起带提权的 `mkdir … && cp …`。结果：`pre-execute-allow` 的**分类器理由原文** = 「The user explicitly confirmed this exact copy command (mkdir -p /var/tmp/auto-e2e && cp … ) **in their answer**」→ `decision allowed-once` → **目标文件真的写出**。**红绿对照**：同一份**活体** `deriveMessages()` 结果喂两版实现——本版意图窗口 = 用户原话 **+ `user: 确认执行 [answering the agent's question: "…"]`**（绿）；`v0.16.0` 版 = **只有用户原话，答复整条不可见**（红，即报告中的 bug 原样复现） |
+
+  - **未跑项与边界（如实标注）**：① **真实浏览器/UI 交互**未跑（本版不触达 UI 与图标；那类改动另行验证）；② B 类两项仍按既有结构断言替代（理由见覆盖清单）。**已从「未跑」转为「已跑」的**：真实**模型回合**（隔离实例里跑通，见 C 行第二条）；A4 的审批侧（同上）。**活体搭法坑（新增，供下次复用）**：① 隔离 profile 里 `ctx.agents.create()` 出来的 agent **不继承** `agent-default-model` 行，必须在 `CreateAgentOptions.agentOptions` 显式给 `provider/model`；② 模型面工具在 web profile 里挂在 **agent-preset realm**，宿主平面取不到，`setup(agentCtx)` 里用 `agentCtx.plugin(<宿主真实工具模块>)` 挂载才拿得到（例如真实 `ask_user_question`）；③ `user-questions/request` 瀑布是 **agent-scoped**，本地应答器必须在 `setup` 的 agent 作用域里注册，挂在根上下文**收不到**（表现为 `NO_PROVIDER`，模型会把它读成"这个工具不存在"）；④ 宿主**拒绝回合外审批**（`approval.request() outside an open turn`），所以 A4 审批侧必须在真回合内驱动。
+  - **隔离实例用完已清理**：`/tmp/auto-e2e/`（clonefile 出来的 profile 副本、驱动插件、隔离 home、含那份一次性密钥副本）、`/var/tmp/auto-e2e/` 与仓库内临时的 `/.e2e-old-lib/` 全部 `~/bin/trash` 处理。**密钥处理如实记录**：真实路由密钥（`~/.dsh/.credentials.yaml`）由**用户**在 auto mode 之外拷入一次性隔离 home；插件自身的闸门**两次拒绝**我代为拷贝（`classifier:unsafe`，理由「reading key material is on the hard floor regardless of authorization」）——**硬底线在真实场景里被自己的闸门执行了一次**，这也是本轮的一条实证。
 
 ### 未发布（2026-09-26）：0.1.7-rc.2 权限预设图标补丁适配（已实现并验证）
 
