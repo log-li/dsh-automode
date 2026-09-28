@@ -1,0 +1,122 @@
+{
+  "_about": "Real captured host envelopes for the intent-window regression (v0.16.1). Read by scripts/smoke.test.mjs; see .plans/spec/dsh-automode-spec.md (§已知问题 → ask_user_question).",
+  "_rule": "Each case: `assistant` = the real assistant message REDUCED to its relevant tool-call block (other content blocks are irrelevant to the projection and were dropped to keep the fixture readable); `result` = the real tool-result message VERBATIM. Only local absolute paths are sanitized to /Users/x.",
+  "v4": {
+    "_provenance": "Real v4 session log (session format 4, dsh 0.1.7-rc.2), the live 2026-09-28 case that exposed the bug: assistant seq 216 + tool/result seq 218; non-ask pair: assistant seq 276 + tool/result seq 278.",
+    "ask": {
+      "assistant": {
+        "type": "tool-call",
+        "id": "call_00_MLnWn27JF92keXDldJdd3841|242c05b8-4754-41eb-a68a-103d01009f76",
+        "name": "ask_user_question",
+        "arguments": "{\"questions\":[{\"header\":\"确认执行\",\"id\":\"confirm_cmds\",\"options\":[{\"description\":\"我按①→④顺序跑，每步回读版本/日志/渠道状态，网关全程只断 1–3 分钟。\",\"label\":\"确认，按这四条执行\"},{\"description\":\"你自己在普通终端跑（可先用 umask 0077），跑完若还有报错告诉我，我接着诊。\",\"label\":\"只要命令，我自己跑\"},{\"description\":\"保持现状（网关半死、IM 不回话，但 App 本体可用），你自己在 App 里点修复。\",\"label\":\"先别动\"}],\"question\":\"以上确切命令（停 launchd 网关 → 全局装 openclaw@2026.9.6 → 起网关 → 验证）确认执行吗？\"}]}"
+      },
+      "result": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "call_00_MLnWn27JF92keXDldJdd3841|242c05b8-4754-41eb-a68a-103d01009f76"
+        },
+        "toolCallId": "call_00_MLnWn27JF92keXDldJdd3841|242c05b8-4754-41eb-a68a-103d01009f76",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"answers\":[{\"id\":\"confirm_cmds\",\"selected\":[\"确认，按这四条执行\"]}]}"
+          }
+        ],
+        "isError": false,
+        "id": "311fcd3f-ba2a-47ac-8306-feef6683dc83"
+      },
+      "expectAnswer": "确认，按这四条执行",
+      "expectQuestion": "以上确切命令（停 launchd 网关 → 全局装 openclaw@2026.9.6 → 起网关 → 验证）确认执行吗？"
+    },
+    "nonAsk": {
+      "assistant": {
+        "type": "tool-call",
+        "id": "call_00_HQJ30W7LLTXoMfA2RYV63984|ffee0224-c925-4be8-bff3-875becee1db3",
+        "name": "bash",
+        "arguments": "{\"command\":\"nohup /tmp/oc-fix-20260928.sh > /tmp/oc-fix-20260928.out 2>&1 &\\necho \\\"started pid=$!\\\"; sleep 8; tail -5 /tmp/oc-fix-20260928.out\",\"description\":\"Run OpenClaw fix script in background\",\"run_in_background\":true}"
+      },
+      "result": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "call_00_HQJ30W7LLTXoMfA2RYV63984|ffee0224-c925-4be8-bff3-875becee1db3"
+        },
+        "toolCallId": "call_00_HQJ30W7LLTXoMfA2RYV63984|ffee0224-c925-4be8-bff3-875becee1db3",
+        "content": [
+          {
+            "type": "text",
+            "text": "started background job bash-3392"
+          }
+        ],
+        "isError": false,
+        "id": "a54e7a03-ed88-45ee-96b0-13f2e31789a5"
+      },
+      "expectText": "started background job bash-3392"
+    }
+  },
+  "v3": {
+    "_provenance": "Real released-v3 session log (session format 3, session 2640f4ef…): assistant seq 158 + the tool-result wrapper at seq 161; non-ask pair: assistant (bash call_q7h0w24v, assistant/message seq 78 — the same call also has a tool/call record at seq 79) + wrapper seq 80. The v3 envelope is role:\"user\" + source.kind:\"tool\" + exactly one `tool-result` block (callId + nested content + block-level isError) — matching the host’s own v3→v4 liftToolResult() precondition.",
+    "ask": {
+      "assistant": {
+        "type": "tool-call",
+        "id": "call_r9ela25t",
+        "name": "ask_user_question",
+        "arguments": "{\"questions\":[{\"header\":\"定位歧义\",\"id\":\"mode_ambiguity\",\"multi_select\":false,\"options\":[{\"description\":\"在同一个会话界面，设置/工具注册表显示有 subagent，但当前对话实际可用的工具里没有——这更像设置页 vs 运行时挂载的差异\",\"label\":\"同一次会话，设置页能看到 subagent 但工具列表里没有（Recommended）\"},{\"description\":\"在会话里切换了模式并新建/继续会话后，工具列表缺 subagent——那需要看具体是哪个模式\",\"label\":\"切换到创作模式（preset）后工具列表里没有 subagent\"},{\"description\":\"你在别的地方（如某个插件面板、某个旧版本会话）观察到，想让我针对性排查\",\"label\":\"其他某个具体界面/版本里看到\"}],\"question\":\"你说「创作模式里没有 subagent tool」，这里指的具体是哪种情况？\"}]}"
+      },
+      "result": {
+        "source": {
+          "kind": "tool",
+          "callId": "call_r9ela25t"
+        },
+        "content": [
+          {
+            "type": "tool-result",
+            "toolCallId": "call_r9ela25t",
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"answers\":[{\"id\":\"mode_ambiguity\",\"selected\":[\"同一次会话，设置页能看到 subagent 但工具列表里没有（Recommended）\"]}]}"
+              }
+            ],
+            "isError": false
+          }
+        ],
+        "role": "user",
+        "id": "6e08054c-e5dc-4e4e-bd86-b9297034228d"
+      },
+      "expectAnswer": "同一次会话，设置页能看到 subagent 但工具列表里没有（Recommended）",
+      "expectQuestion": "你说「创作模式里没有 subagent tool」，这里指的具体是哪种情况？"
+    },
+    "nonAsk": {
+      "assistant": {
+        "type": "tool-call",
+        "id": "call_q7h0w24v",
+        "name": "bash",
+        "arguments": "{\"command\":\"cd /Users/x/.dsh/profiles/web; echo \\\"=== grep subagent / agent in cordis.yml and cordis.patch.yml ===\\\"; grep -n -i -E 'subagent|agent' cordis.yml 2>/dev/null | head -60\",\"description\":\"Search agent/subagent config in web profile cordis.yml\"}"
+      },
+      "result": {
+        "source": {
+          "kind": "tool",
+          "callId": "call_q7h0w24v"
+        },
+        "content": [
+          {
+            "type": "tool-result",
+            "toolCallId": "call_q7h0w24v",
+            "content": [
+              {
+                "type": "text",
+                "text": "=== grep subagent / agent in cordis.yml and cordis.patch.yml ===\n"
+              }
+            ],
+            "isError": false
+          }
+        ],
+        "role": "user",
+        "id": "5022a42e-d923-491b-be83-519473779583"
+      },
+      "expectText": "=== grep subagent / agent in cordis.yml and cordis.patch.yml ==="
+    }
+  }
+}

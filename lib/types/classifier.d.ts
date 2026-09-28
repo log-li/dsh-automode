@@ -118,6 +118,9 @@ export declare function restoreToolCallArgs(messages: readonly Message[], callId
  * the tool — it is folded into the intent window (as a `user:` line) so the
  * verdict-cache signature changes and a stale DENY no longer swallows a
  * fresh tool-based grant (M-34: every verdict input belongs in the cache key).
+ * Since v0.16.1 that answer is read in BOTH host envelopes — the legacy
+ * `tool-result` block (v3) and the first-class `role: 'tool'` message whose
+ * content is plain text (v4, `dsh >= 0.1.7-rc.2`).
  */
 export declare function renderUserIntent(messages: readonly Message[], maxMessages: number): string;
 /** Truncate a rendered context block to a char budget (classifyContextChars). */
