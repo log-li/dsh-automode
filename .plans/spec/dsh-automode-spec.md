@@ -512,7 +512,29 @@ src/
 - 有 A 类未跑 ⇒ **不得 commit/push**，除非用户明确同意并记录在案。
 - 替代（B 类）必须在结果表里写明「用哪条断言替代、为什么」。
 
-**隔离活体 E2E 配方（2026-09-23 首次跑通，dsh `0.1.7-alpha.2` 实测）**
+**★ 一体机（2026-09-28 起）：`scripts/e2e-isolated-home.sh` + `scripts/e2e-drive/`**
+
+上面的手工配方已被脚本化，**一次搭好、之后自助**（密钥那一步除外，见下）：
+
+```bash
+scripts/e2e-isolated-home.sh setup --with-driver   # 建 ~/.dsh-e2e/：clonefile 克隆在用 profile + 写独立 profile + 挂驱动
+scripts/e2e-isolated-home.sh key-link              # 打印**唯一需要人工执行**的那一行（借模型密钥）
+scripts/e2e-isolated-home.sh doctor                # 预检：home/DSH_HOME/插件可解析/auto-mode 行/密钥是否就位
+E2E_PROMPT='…' scripts/e2e-isolated-home.sh launch -- --port 3311 --no-open
+scripts/e2e-isolated-home.sh reset                 # 清 sessions + 审计记录，保留 home
+```
+
+- **持久化而非每次重建**：`~/.dsh-e2e/`（`DSH_E2E_HOME` 可覆盖）常驻，`reset` 只清会话与审计轨迹。
+- **密钥那一步为什么必须由人做**：读/拷密钥材料在本插件**硬底线**上，**用户授权也不放行**——2026-09-28 代拷被自己的闸门
+  拒了两次（`classifier:unsafe`），最终由用户在 auto mode 之外完成。脚本因此改为**只打印**那一行；用的是**软链**（不复制、
+  store 保持 0600、`reset` 也不会删到真密钥）。
+- **`scripts/e2e-drive/`（dev-only，不进 npm 包）**：真宿主里造 agent、跑真 `/auto`、发**一个真回合**、把**活体
+  `deriveMessages()`** 与插件函数在该消息上的输出写进 `E2E_OUT`；`E2E_OLD_LIB=<上一版 lib 目录>` 给同一份活体消息跑**红对照**；
+  `E2E_ASK_ANSWER` 注册 agent 作用域的 `user-questions` 应答器并挂**宿主真实** `ask_user_question` 工具。四个"只有真机才会暴露"的
+  坑（`agentOptions` 不给就没有 model / 工具在 agent-preset realm / 瀑布是 agent-scoped / 回合外审批被宿主拒绝）都写在
+  `skills/dsh-isolated-e2e-harness.md`。
+
+**手工配方（2026-09-23 首次跑通，dsh `0.1.7-alpha.2` 实测；脚本的前身）**
 1. **装目标版本的 CLI 树**（含 shipped bundles，不必碰全局安装）：`npm install --prefix /tmp/<cli> @deepseek-ai/dsh@<ver>`。
 2. **建独立 home 与 profile**：`HOME=/tmp/<home>` **且** `DSH_HOME=/tmp/<home>/.dsh` —— **两个都要设**：会话/凭据按 `DSH_HOME` 找，但本插件的审计日志走 `homedir()`（`~/.dsh/auto-mode/decisions.jsonl`），**只设 `DSH_HOME` 会把测试记录写进用户真实的审计日志**（2026-09-23 首次活体跑时实际发生过）。隔离后所有状态（sessions / decisions.jsonl / 凭据）都落在同一个临时目录下。`profiles/<name>/package.json` 的 `dsh.profile.bundles` = `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-headless` + 本插件，`node_modules/@log.li/dsh-automode` 指向本仓库（**link 安装，改源码即生效**）；`cordis.patch.yml` 里 `insert` 一个**驱动插件**。
 3. **驱动插件走真实命令路径**：`ctx.commands.execute(agent, '/auto', [], signal)`（与客户端敲 `/auto` 同一条 → 同一个 `writeAutoMode`），**不要伪造注入**；`headless` 不执行 `/` 命令（当成普通消息发给模型），所以必须用驱动而不是把 `/auto` 当任务文本。

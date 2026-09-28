@@ -1,0 +1,8 @@
+{
+  "name": "dsh-e2e-drive",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "Drive ONE real model turn inside an isolated DSH instance and report what the harness + plugins actually did (dev-only E2E harness; never published — scripts/ is outside the npm files list)."
+}

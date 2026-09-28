@@ -43,6 +43,8 @@ lib/                  构建产物（**入库**，运行时读这里）
 scripts/              smoke / patch-icon（图标补丁自测）/ bridge-flow / compose-entries / path-trust /
                       privacy-check / release-notes / e2e（含 e2e-v4-migration、e2e-intent-envelopes）
                       + fixtures/（意图窗口回归用的真实抓取信封）
+                      + e2e-isolated-home.sh（★ 隔离实例一体机：setup/key-link/doctor/launch/reset）
+                      + e2e-drive/（dev-only 驱动插件：真回合 + 活体 deriveMessages + 红对照）
 patches/              可选的本地补丁脚本（**随 npm 包发布**）：dsh-permission-preset-icon.mjs 让权限选择器读预设 icon
 ```
 
