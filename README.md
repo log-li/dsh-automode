@@ -295,6 +295,8 @@ src/
 dsh `0.1.5-rc.1` removed the `session.events` accessor — without the projection path every auto-mode turn died with `Cannot read properties of undefined (reading 'length')` while the system prompt was assembled (fixed in v0.11.2). **dsh `≥ 0.2.0` is not yet verified** — bump the peer range only after testing against a new core.
 
 DSH session format v4 (`dsh ≥ 0.1.7-alpha.1`) retired the catch-all `plugin` message-source kind and refuses it on every durable message slot. Injected messages carry this plugin's own source kind instead — the same identity the v3 → v4 session-log migration rewrites older records to, so both format generations accept it and no version probing is needed (fixed in v0.15.4).
+
+The same format change moved tool results from a user-message wrapper to a first-class `tool` message. Both shapes are read when recovering the user's intent, so your answer to `ask_user_question` counts as an authorization on either generation (fixed in v0.16.1).
 - **Verified on macOS only.** Tested against the macOS filesystem, the [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) runtime, and the DSH version in use at development time. Path semantics — including the macOS `/tmp` → `/private/tmp` symlink (handled by realpath-nearest-ancestor resolution) and workspace-path trust — have **not** been verified on Linux or Windows, and deny-pattern/path matching may differ there.
 - **Found a bug, or an issue on another platform?** Bug reports and pull requests are welcome — open an issue or PR at [github.com/log-li/dsh-automode](https://github.com/log-li/dsh-automode).
 

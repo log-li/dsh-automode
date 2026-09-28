@@ -41,7 +41,8 @@ src/
   prompt.ts / rules.ts / cache.ts / breaker.ts / bridge.ts / permission-state.ts / config.ts / log.ts
 lib/                  构建产物（**入库**，运行时读这里）
 scripts/              smoke / patch-icon（图标补丁自测）/ bridge-flow / compose-entries / path-trust /
-                      privacy-check / release-notes / e2e（含 e2e-v4-migration）
+                      privacy-check / release-notes / e2e（含 e2e-v4-migration、e2e-intent-envelopes）
+                      + fixtures/（意图窗口回归用的真实抓取信封）
 patches/              可选的本地补丁脚本（**随 npm 包发布**）：dsh-permission-preset-icon.mjs 让权限选择器读预设 icon
 ```
 
@@ -58,6 +59,8 @@ npm run test:compose  # 复合命令写目标提取
 npm run test:pathtrust
 npm run test:v4       # opt-in：真实 v3 会话日志在「新会话格式」上重开 + 注入标识归一 + 退役形态红对照
                       # 需要 DSH_V4_NODE_MODULES 指向 ≥ v4 的 DSH 安装（本机在用实例低于 v4 时自动 SKIP 给指引）
+npm run test:intent   # opt-in：用宿主自己的 session-format catalog 打开真实历史，把真实 deriveMessages()
+                      # 喂给 renderUserIntent——真答复必须进意图窗口（绿），上一版实现必须看不到（红对照）
 npm run check:privacy
 npm run release:notes
 ```

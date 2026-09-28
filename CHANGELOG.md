@@ -7,6 +7,11 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ### Changed
 - (track upcoming changes here; moved into a dated version section at release time — Keep a Changelog)
 
+## [0.16.1] — 2026-09-28
+
+### Fixed
+- **A confirmation you gave through `ask_user_question` reaches the gate again on `dsh` 0.1.7-rc.2 and newer.** Those hosts deliver tool results in a newer message shape, and the gate only read the older one — so on them your answer was invisible: the gate kept seeing your earlier question, and a command you had just confirmed was rejected again with a reason saying you had not authorized it. Both shapes are now read, so a tool-based confirmation invalidates a stale `DENY` again, exactly as the README describes. Older hosts (`<= 0.1.6`) are unaffected.
+
 ## [0.16.0] — 2026-09-26
 
 ### Added
@@ -126,6 +131,11 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [Unreleased]
 
 （发布前在此跟踪变更；发布时移入带日期的版本段——Keep a Changelog）
+
+## [0.16.1] — 2026-09-28
+
+### 修复
+- **经 `ask_user_question` 给出的确认，在 `dsh` 0.1.7-rc.2 及更新版本上重新能被闸门看到。** 这些宿主用新的消息形态投递工具结果，而闸门只认旧形态 —— 于是你的答复在闸门侧不存在：它看到的仍是你更早的那个提问，你刚确认过的命令照旧被拒，理由还说你没有授权。现在两种形态都读，工具型确认重新能让旧的 `DENY` 缓存失效 —— 与 README 描述的行为一致。旧宿主（`<= 0.1.6`）不受影响。
 
 ## [0.16.0] — 2026-09-26
 
