@@ -1,6 +1,6 @@
 {
   "name": "@log.li/dsh-automode",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "CC-style auto mode for DeepSeek Harness: deterministic deny/allow rules + pre-execute gate + model-agnostic two-stage classifier. Two-state (allow/reject) classifier since 0.8.0. TypeScript rewrite merging dsh-auto-mode v0.4.1 with Nuo-cl/dsh-auto-mode native integration.",
   "type": "module",
   "main": "lib/index.js",
@@ -39,6 +39,7 @@
     "test:patch": "node scripts/patch-icon.test.mjs",
     "check:privacy": "node scripts/privacy-check.mjs",
     "test:v4": "node scripts/e2e-v4-migration.mjs",
+    "test:intent": "node scripts/e2e-intent-envelopes.mjs",
     "test:e2e": "node scripts/e2e-classifier.mjs",
     "release:notes": "node scripts/release-notes.mjs",
     "prepublishOnly": "npm run build",
