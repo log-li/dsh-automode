@@ -270,6 +270,10 @@ src/
 
 ## 已知问题 / 待办
 
+- **★ 重定向写目标不进信任证明（2026-10-18 活体验收暴出，方向 fail-open）**：`bashWriteDestinations()` **不提取 `>` / `>>` 的重定向目标**。离线实测：`printf 'hello' > /tmp/x/out.txt`、`echo hi >> /tmp/x/log.txt`、`echo hi > ~/outside-allowlist.sh`、`cat >> /etc/hosts` 一律返回 `[]`（而 `mkdir -p /tmp/x` → `["/tmp/x"]`、`cp a b` → `[b]` 正常）。
+  - **后果**：这类写操作拿不到「目标在信任根内」的证明，于是**不走 allowPath 信任分支**（本次活体验收就是 `pre-execute-bashop esc=true bashDests=[]` + 单 token 快路径放行），只剩分类器一层兜着；同时 deny 频带对目标路径的扫描也看不到它。
+  - **当前边界**：DSH 文件沙箱仍拦工作区外写入（会触发审批 → 答复器复核），所以本次无害；但**「确定性信任证明」对重定向写是缺的**，属结构性缺口。
+  - **处置**：不在 v0.17.0 修（本版前提是 `src/` 零改动）。待办：给 `bashWriteDestinations()` 支持重定向目标（含 `2>`、`&>`、`<<<` 等变体与引号/变量未解析时 fail-closed），并补红绿用例；优先级按「确定性层应覆盖所有写形态」排。
 - **`0.2.x` 类型面未纳入 `npm run typecheck`（2026-10-17 复核，独立 review 提出并已复现）**：仓库 devDependency 是 `@deepseek-ai/dsh-*@0.1.0-rc.8`，所以 `npm run typecheck` 永远只验 0.1 线的 `.d.ts`。把 `src` + `tsconfig` 复制到临时树、`@deepseek-ai/*` 指向 `0.2.1-rc.2` 后跑同一个 tsc → **12 条类型错误**：
   - `src/classifier.ts`：0.2.1 的 `ContentBlockMap` 已无 `'tool-result'`（union 只有 `text/reasoning/image/file/tool-call/tool-addition/tool-removal`），而 v3 兼容分支仍按该块取值 → 死分支 + 类型不重叠。
   - `src/index.ts:507`：`agent/created` 在 0.2.1 从 `@mode emit` 改为 `@mode serial`，监听器返回类型由 `void` 变为 `undefined | Promise<undefined>`。
@@ -604,7 +608,7 @@ scripts/e2e-isolated-home.sh reset                 # 清 sessions + 审计记录
   |---|---|---|---|
   | A1 | 加载 | ✅ | composed 树出现 `- id: auto-mode`；隔离 home 审计日志首行 `event:boot … dsh-automode v0.17.0 active (failClosed=true, preExecute=true)` |
   | A2 | 进入 auto mode | ✅ | 驱动走真实命令路径 `ctx.commands.execute(agent,'/auto')` → `command/run{name:"auto",source:{kind:"user"}}` → `command/done{kind:"success","Auto mode enabled."}` → `permission/preset{preset:"auto-mode"}`；注入落 `agent/inbox/spliced`/`user/message` 且 `source:{kind:"plugin:auto-mode"}` |
-  | A4 | allowPaths 提权桥接 | ✅ | 真实回合：`pre-execute-bashop(esc=true, cwd=/tmp/dsh-e2e-ws)` → `pre-execute-allow: one-token filter: routine/safe action` → `decision allowed-once`（reason 为提权理由原文）；目标文件 `/tmp/…/out.txt` 真的写出（内容 `hello-021`）；`turn/end{kind:completed}` |
+  | A4 | 提权请求下的放行 | ⚠️ **部分**（口径已按复核收紧） | 真实回合里闸门确实介入：`pre-execute-bashop(esc=true, cwd=/tmp/dsh-e2e-ws)` → `pre-execute-allow` → `decision allowed-once`（reason 为提权理由原文）→ 目标文件 `/tmp/…/out.txt` 真写出（`hello-021`）→ `turn/end{kind:completed}`。**但这一轮走的是单 token 快路径（`one-token filter: routine/safe action`），没有触达 `curated allowPath` → `approval-bridge auto-allowed` 那条专门通路**；且 `pre-execute-bashop` 记的是 `bashDests=[]`——`printf … > <path>` 的**重定向写目标没有被提取**（见「已知问题」）。因此「allowPaths 信任通路已活体验证」**不成立**，只能记「闸门+答复器+文件写出在真回合里成立」 |
   | A5 | 会话格式 | ✅ | `npm run test:v4` PASS；活体消息里 `role:"tool"` ×2（v4 原生 tool 消息） |
   | C | `auto-mode:allowlist` 段 | ✅（位置更正） | 出现在**模型可见的 runtime-context 消息**（`role:user`），不是宿主 `system/message`；宿主自己的 system prompt 里没有这一段 |
   | A3 | deny 层活体拦下 | ⛔ 未跑（如实标注） | 为避开「让自主 agent 首次即申请全权限 + 执行删除类命令」，本轮提示只保留一条 `/tmp` 写文件命令；该形状被本插件分类器两次拒绝、熔断器跳闸后由用户授权的最简版通过。deny/删除守卫的命中改为**离线验证**（`mv /etc/<不存在路径>` 命中 deny 正则、`rm -rf /tmp/<不存在目录>` 命中删除守卫）。**结论：A3 在本宿主上未做活体验证，代码零改动，历史 0.1.7 轮次有活体记录** |
