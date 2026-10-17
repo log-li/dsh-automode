@@ -55,7 +55,7 @@ dsh plugin add ./path/to/dsh-automode
 
 ### 可选：权限选择器里的 ⚡ 图标
 
-`auto-mode` 预设声明了一个 `icon`，但**原生 DSH 把三个内置 glyph 写死在客户端里，会静默忽略预设的 `icon`** —— 所以只有额外打上随包提供的补丁，闪电才会显示：
+`auto-mode` 预设声明了一个 `icon`，但**原生 DSH 两边都不认预设的 `icon`**：宿主预设 schema 没有 `icon` 字段、`optionOf()` 也不透传，客户端产物还把三个内置 glyph 写死。所以只有额外打上随包提供的补丁，闪电才会显示——补丁给 schema 加上该字段、把它转发给客户端目录、并让客户端学会画这个路径：
 
 ```bash
 # <profile> 是你的 DSH profile 名（通常是 web）。用哪个 profile 下的副本都行：
@@ -73,9 +73,9 @@ node patches/dsh-permission-preset-icon.mjs
 
 - **它只是外观。** 闪电渲染与否，`auto-mode` 行为完全一致。不在意就别跑。
 - **每次 `npm update @deepseek-ai/dsh` 或重装插件都会把它冲掉** —— 之后重跑一次即可。它不会「打一半」：先做全量锚点预检，锚点对不上的文件会被明确报告（`ANCHORS NOT FOUND`）并**逐字节保持原样**。
-- **回滚就是抄回备份。** 每个被改写的文件旁边都先留一份 `<文件名>.pre-dsh-automode-icon.bak`；重跑是空操作（报 `already patched`）。
-- **它针对 DSH 0.1.7-rc.2 这一代。** 更早的 0.1.x 行会被标注后跳过（那几代的权限选择器在另一个包里，锚点不可能命中）。更新的版本仍会按锚点尝试——失配则文件逐字节不动、报告点名是哪一处锚点没中。将来 DSH 若原生支持预设 `icon`，删掉脚本即可。
-- `npm run test:patch`（已并入 `npm test`）用合成 fixture 覆盖 apply / 幂等 / dry-run / 锚点失配 / 外来注入拒绝 / 参数错误；本机存在 0.1.7 安装时，还会**拿真实产物的副本**跑一遍（两个补丁产物都过 `node --check`）。
+- **回滚就是抄回备份。** 每个被改写的文件旁边都先留一份 `<文件名>.pre-dsh-automode-icon.bak`，重跑是空操作。`already patched` 的含义是脚本自己写过那个文件：宿主半边只有在备份加脚本自己的改动能复现当前字节时才这么报，所以陈旧或外来的备份骗不过它。宿主自己就提供 `icon` 透传的，报 `natively supported`，文件逐字节不动。
+- **它覆盖 `0.1.7-rc.2` 这一代到 `0.2.x`，两半都打。** 比 `0.1.7` 更早的版本线会被标注后跳过（那几代的权限选择器在另一个包里，锚点不可能命中）。`0.2.1-rc.2` 上两半都还需要打，因为宿主 schema 与客户端都不读预设 `icon`。锚点失配的文件逐字节不动，报告点名是哪一处锚点没中。将来某一代 DSH 自己在宿主半边提供透传时，这一半会报 `natively supported`；等客户端也开始读预设 `icon`，删掉脚本即可。
+- `npm run test:patch`（已并入 `npm test`）用合成 fixture 覆盖 apply / 幂等 / dry-run / 锚点失配 / 外来注入拒绝 / 参数错误，以及 `natively supported` 与 `already patched` 的区分（包括陈旧 sidecar 不得冒充脚本自己的产物），并对「判错时一个字节都不写」做字节级断言；本机存在真实 DSH 安装时，还会**拿真实产物的副本**跑一遍（两个补丁产物都过 `node --check`）。
 
 
 ## 命令
@@ -195,7 +195,7 @@ pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来�
         icon: '<你的-svg-path-d>'   # 默认 bolt：'M9.15 3.4L5.85 8.55H7.95L7.05 12.6L10.45 7.25H8.25L9.15 3.4Z'
 ```
 
-图标只是**外观**——无论是否渲染，行为完全一致。它只在支持读取预设 `icon` 的 DSH 上显示（原生 DSH 会忽略；随包提供的 [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) 可开启 —— 见[安装](#可选权限选择器里的--图标)）。渲染位置是选择器菜单与当前值触发器；设置页的「新会话默认预设」那一行只显示文字。不设 `icon` 即用默认 bolt。
+图标只是**外观**——无论是否渲染，行为完全一致。它只在打上随包提供的 [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) 后才显示：补丁给 schema 加上字段、把值转发给客户端、并让客户端学会画这个路径（见[安装](#可选权限选择器里的--图标)）。渲染位置是选择器菜单与当前值触发器；设置页的「新会话默认预设」那一行只显示文字。不设 `icon` 即用默认 bolt。
 
 ### 两阶段分类器
 
@@ -285,18 +285,23 @@ src/
 
 ## 兼容性与贡献
 
-**支持的 dsh 版本：`0.1.0-rc.6` – `0.1.x`**（peer 范围 `>=0.1.0-rc.6 <0.2.0`）。权限事实（预设 / 沙箱 / 审批策略）经两条自动探测的读取路径获取：
+**支持的 dsh 版本：`0.1.0-rc.6` – `0.2.x`**（peer 范围 `>=0.1.0-rc.6 <0.3.0-0`），其中 0.2 线实测于 `0.2.1-rc.2`。有两点要说明白：
+
+- peer 范围覆盖的是 `0.2.x` 的**正式版**。按 npm 的预发布规则，预发布宿主（包括实测的 `0.2.1-rc.2`）不会落在比较器带 `0.1.0-rc.6` 预发布标识的范围内；原来的上界 `<0.2.0` 对 `0.1.7-rc.2` 也是同样的结果。而经 profile 安装（`dsh plugin add` / `link:`）不校验 peer 范围，所以预发布宿主实际可用。
+- `npm run typecheck` 编译的是本仓 devDependency（`@deepseek-ai/dsh-*` 0.1.0-rc.8），不是你在跑的宿主。把它指向 `0.2.1-rc.2` 的 `.d.ts` 后，tsc 会报两类类型漂移：v3 兼容分支里的 `tool-result`（0.2.x 的 `ContentBlockMap` 已无该分支），以及 `agent/created` 监听器的返回类型。两者都只是编译期问题：该分支在 0.2.x 上不可达，监听器返回 `undefined` 也符合新签名。运行时行为不受影响。
+
+权限事实（预设 / 沙箱 / 审批策略）经两条自动探测的读取路径获取：
 
 | dsh 版本 | 权限读取路径 |
 |---|---|
 | `0.1.0-rc.6` – `0.1.4.x` | `session.events` 事件日志（`effectivePermissionPreset` 等） |
 | `≥ 0.1.5-rc.1` | 持久的 `permissions` 会话投影（`ctx.sessionProjections.stateOf`） |
 
-dsh `0.1.5-rc.1` 移除了 `session.events` 访问器——没有投影路径时，每个 auto-mode 回合都会在组装系统提示时报 `Cannot read properties of undefined (reading 'length')`（v0.11.2 修复）。**dsh `≥ 0.2.0` 尚未验证**——只有对新内核实测通过后才应上调 peer 范围。
+dsh `0.1.5-rc.1` 移除了 `session.events` 访问器——没有投影路径时，每个 auto-mode 回合都会在组装系统提示时报 `Cannot read properties of undefined (reading 'length')`（v0.11.2 修复）。插件运行时探测的宿主导出在 `0.2.1-rc.2` 上全部存在：`setApprovalPolicy`、`setSandboxMode`、`PermissionPresetService`（含 `current` / `set` / `derive` / `optionOf`）与服务名 `permissionPresets`。
 
-DSH session format v4（`dsh ≥ 0.1.7-alpha.1`）退役了 catch-all 的 `plugin` 消息来源标识，并拒绝所有 durable 消息槽位上的该形态。注入消息改用本插件自有的 source kind——与 v3 → v4 会话日志迁移把老记录归一到的标识一致，因此两代格式都接受，无需版本探测（v0.15.4 修复）。
+DSH session format v4（`dsh ≥ 0.1.7-alpha.1`）退役了 catch-all 的 `plugin` 消息来源标识，并拒绝所有 durable 消息槽位上的该形态。注入消息改用本插件自有的 source kind——与 v3 → v4 会话日志迁移把老记录归一到的标识一致，因此两代格式都接受，无需版本探测（v0.15.4 修复）。`0.2.x` 上的会话格式仍是 v4，没有 v5，v3 → v4 迁移也仍被接受。
 
-同一次格式变更还把工具结果从「用户消息包裹」改成了原生 `tool` 消息。还原用户意图时**两种形态都读**，因此你对 `ask_user_question` 的答复在两代格式上都算授权（v0.16.1 修复）。
+同一次格式变更还把工具结果从「用户消息包裹」改成了原生 `tool` 消息。还原用户意图时**两种形态都读**，因此你对 `ask_user_question` 的答复在两代格式上都算授权（v0.16.1 修复，在 `0.2.1-rc.2` 上仍然正确）。
 - **仅在 macOS 上验证**。已针对 macOS 文件系统、[DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 运行时与开发时使用的 DSH 版本做过测试。路径语义——包括 macOS 的 `/tmp` → `/private/tmp` 软链（由 realpath 最近祖先解析处理）与工作区路径信任——**尚未在 Linux / Windows 上验证**，deny 模式与路径匹配在这些平台上可能有差异。
 - **发现 bug，或其它平台上有问题？** 欢迎提交 issue 或 PR：[github.com/log-li/dsh-automode](https://github.com/log-li/dsh-automode)。
 

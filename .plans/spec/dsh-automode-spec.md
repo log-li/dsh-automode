@@ -26,7 +26,7 @@ Status: implemented
 |---|---|
 | 代码库 | 独立实现 dsh-automode；借鉴 Nuo-cl / pi-automode 的设计模式（见「致谢与参考」） |
 | npm 名 | `dsh-automode`（无连字符） |
-| peerDeps | 精简到最少必需；`@deepseek-ai/dsh-*` 显式声明 `>=0.1.0-rc.6 <0.2.0`（0.2.0 起未验证，见「版本支持声明」） |
+| peerDeps | 精简到最少必需；`@deepseek-ai/dsh-*` 显式声明 `>=0.1.0-rc.6 <0.3.0-0`（`0.2.x` 已实测，见「版本支持声明」） |
 | 语言 | TypeScript |
 | 规则体系 | deny（正则硬拒绝）+ allow（前缀 glob 白名单）+ 散文规则给分类器 |
 | 读取策略 | 只读工具默认放行，deny 列表里的敏感位置除外 |
@@ -234,12 +234,29 @@ src/
 
 ## 版本支持声明
 
-**支持的 dsh 版本：`0.1.0-rc.6` – `0.1.x`**（peer 范围 `>=0.1.0-rc.6 <0.2.0`）。权限事实经两条自动探测的读取路径获取：
+**支持的 dsh 版本：`0.1.0-rc.6` – `0.2.x`**（peer 范围 `>=0.1.0-rc.6 <0.3.0-0`；`0.2.x` 的实测版本为 `0.2.1-rc.2`）。**范围只覆盖 `0.2.x` 的正式版**：按 npm 的预发布规则，预发布宿主（含 `0.2.1-rc.2`）不落在比较器带 `0.1.0-rc.6` preid 的范围里——原来的 `<0.2.0` 对 `0.1.7-rc.2` 也是同样结果，属既有语义不是本次回归；实际安装走 profile link（不校验 peer），所以预发布宿主可用。权限事实经两条自动探测的读取路径获取：
 
 | dsh 版本 | 权限读取路径 |
 |---|---|
 | `0.1.0-rc.6` – `0.1.4.x` | `session.events` 事件日志（`effectivePermissionPreset` 等） |
-| `≥ 0.1.5-rc.1` | 持久的 `permissions` 会话投影（`ctx.sessionProjections.stateOf`） |
+| `≥ 0.1.5-rc.1`（含 `0.2.x`） | 持久的 `permissions` 会话投影（`ctx.sessionProjections.stateOf`） |
+
+**`0.2.x` 的验证记录（2026-10-17，宿主 `0.2.1-rc.2`）**。结论：**插件运行时（`src/` / `lib/`）零改动即兼容**，本次发版只是把支持声明、兼容矩阵与补丁脚本的诊断对齐到事实。
+
+| 检查面 | 方法 | 结果 |
+|---|---|---|
+| 宿主类型面 | `npm run typecheck`（**仓库 devDependency `0.1.0-rc.8`**）+ 另把 `src`/`tsconfig` 复制到临时树、把 `@deepseek-ai/*` 指向 `0.2.1-rc.2` 后跑同一个 tsc | 仓库配置下通过；**对 0.2.1 的 `.d.ts` 有 12 条类型漂移**（见「已知问题」），均为编译期、运行时不受影响 |
+| 会话格式版本 | 读宿主导出的 `SESSION_FORMAT_VERSION` | 仍为 `4`，未引入 v5 |
+| 工具结果信封（v0.16.1 修复点） | `npm run test:intent`：把真实历史按宿主自己的 format catalog 重放 | 绿 5/5 进意图窗口；`v0.16.0` 旧实现在同输入上红 0/5 |
+| v3→v4 迁移与注入标识 | `npm run test:v4` | PASS（189 条迁移 / 10 条注入归一 / 3 次退役形态红对照） |
+| 运行时 `typeof` 探测的宿主导出 | 直接 import 宿主模块枚举导出 | `setApprovalPolicy`、`setSandboxMode`、`PermissionPresetService`（`current`/`set`/`derive`/`optionOf`）、服务名 `permissionPresets` 全在 |
+| 活体链路 | 真实回合的 `~/.dsh/auto-mode/decisions.jsonl` + 系统提示 | 审批答复器（`decision`）、pre-execute 闸门（`pre-execute-*`）、`auto-mode:allowlist` 段均在跑 |
+
+**`icon` 补丁在 `0.2.x` 上的现状（2026-10-17 逐字节核对）**：**宿主与客户端两个半边都仍需补丁**。`0.2.1-rc.2` 的 `dsh-permission-presets` 原生产物里既没有 `icon: z.string()`，也没有 `optionOf()` 的 `icon` 透传；客户端产物仍写死内置三档 glyph（无 `optionGlyph`、无 `option.icon`）。
+
+- **一处曾据此误判、已作废的结论（留痕防复发）**：本机那个装好的宿主文件里确实含有脚本的钉点字符串，**但它是我方脚本在 22:10 写进去的**——隔壁就躺着 `index.js.pre-dsh-automode-icon.bak`（前像里 `spec.icon` 为 0，`diff` 恰好就是那两处锚点）。教训：**「钉点字符串在场」不等于「宿主自带」**，必须同时看有没有本脚本留下的 sidecar 备份，否则会把自家人写的当上游能力。
+- **`natively supported` 因此是前瞻分支**：当宿主真的自带透传时（没有 sidecar → 不是我们写的），脚本报 `natively supported` 并逐字节不动；本机当前**没有**这样的活体目标，该分支由合成 fixture（+ 真机字节去 sidecar）覆盖。
+- **`already patched` 的判据收紧**：宿主要求「有 sidecar，且把本脚本的 edits 重新应用到该 sidecar 能逐字节还原当前文件」才算，避免陈旧 sidecar 让脚本冒领；客户端半边因 `dsh-automode: icon patch` 是本脚本独占文本，只需 marker 在场即可判定。
 
 **注入消息的来源标识（v0.15.4，session format v4 兼容）**：插件注入的每条消息都要带 source kind。**`{ kind: 'plugin', plugin: '…' }` 这个 catch-all 形态已在 `dsh ≥ 0.1.7-alpha.1`（session format v4）退役**——v4 原生准入对 `kind === 'plugin'` 直接抛 `format v4 message requires a producer-owned source kind`，覆盖 `user/message`、`agent/inbox/spliced`（`agent.inject` 走这条）、`system/message`、`assistant/message`、`tool/result`、`session/title-llm-request` 全部 durable 消息槽位。本项目统一改用 **producer-owned kind `{ kind: 'plugin:auto-mode' }`**（不再带 `plugin` 字段）：
 
@@ -248,10 +265,16 @@ src/
 - **命名依据**：v4 迁移对非第一方插件名（`auto-mode` 不在其 `RENAMED_PRODUCERS` / `RELEASED_SAME_NAME_PRODUCERS` 表内）的兜底正是 `` `plugin:${plugin}` ``。
 - 唯一副作用：老宿主 trajectory 的来源标签由「Plugin · auto-mode」变为「Plugin:auto-mode」（纯呈现，不影响判定与投递）。
 
-- **`≥ 0.2.0` 未验证**：只有对新内核实测通过后才应上调 peer 范围。
+- **`≥ 0.3.0` 未验证**：peer 上界停在 `<0.3.0-0`（同时排除 `0.3.0` 的预发布）；只有对新内核实测通过后才应再上调。
 - 不升 major 的理由：单次兼容修复对使用者零行为变化；1.0.0 的时机由 dsh 内核 stable 驱动，不由单次兼容修复驱动。
 
 ## 已知问题 / 待办
+
+- **`0.2.x` 类型面未纳入 `npm run typecheck`（2026-10-17 复核，独立 review 提出并已复现）**：仓库 devDependency 是 `@deepseek-ai/dsh-*@0.1.0-rc.8`，所以 `npm run typecheck` 永远只验 0.1 线的 `.d.ts`。把 `src` + `tsconfig` 复制到临时树、`@deepseek-ai/*` 指向 `0.2.1-rc.2` 后跑同一个 tsc → **12 条类型错误**：
+  - `src/classifier.ts`：0.2.1 的 `ContentBlockMap` 已无 `'tool-result'`（union 只有 `text/reasoning/image/file/tool-call/tool-addition/tool-removal`），而 v3 兼容分支仍按该块取值 → 死分支 + 类型不重叠。
+  - `src/index.ts:507`：`agent/created` 在 0.2.1 从 `@mode emit` 改为 `@mode serial`，监听器返回类型由 `void` 变为 `undefined | Promise<undefined>`。
+  - **运行时不受影响**（类型擦除；v3 分支在 0.2.x 不可达；返回 `undefined` 合规），但**「在 0.2.1 上通过类型检查」这句话是错的，不要再写**。修法二选一：① 给 `ContentBlockMap` 做模块增强或本地窄类型、监听器显式 `return undefined`；② 保持现状并在文档里如实标注。本版取 ②（`src/` 零改动是本次发布的前提），修法 ① 记为待办。
+- **`icon` 补丁的 `natively supported` 分支只有合成 fixture 覆盖**：本机没有「宿主真的自带透传」的活体目标（`0.2.1-rc.2` 两半都仍需补丁）。另有一处方向安全的误判：本方补丁 + 任何外来字节改动会让「sidecar 复现」失败 → 判 `natively supported`（不写文件，但措辞会让人以为宿主自带）。已知，暂不细分「无 sidecar」与「sidecar 复现不出」。
 
 - **★ `ask_user_question` 的答复在 `dsh ≥ 0.1.7-rc.2` 上不再进入分类器意图窗口 → 用户经由该工具给出的授权对闸门不可见**（2026-09-28 实测复现，**v0.16.1 已修复**；与 issue #3 同族：都是 session format v4 换形后插件仍在读 v3 信封）
   - **症状**：用户在 `ask_user_question` 里明确选了「确认执行」（答复原话记入会话），随后的提权 bash 仍被 `pre-execute-deny` 拒，理由为 **「The user only asked why OpenClaw is stuck; they did not authorize …」** —— 分类器看到的是**更早那条原始提问**，看不到刚发生的确认；连续两次同样被拒（改过措辞、改过命令，均拒）。
@@ -563,6 +586,43 @@ scripts/e2e-isolated-home.sh reset                 # 清 sessions + 审计记录
    教训：**能被测试卡住的，就不要靠记忆**；发布流程必须有一道「文档描述 == 当前行为」的机械关卡。
 
 ## 变更历史
+
+### v0.17.0（2026-10-17）：DSH `0.2.x` 支持声明 + `icon` 补丁的判据与诊断修正
+
+- **触发**：本机宿主升到 `0.2.1-rc.2`（App 与全局 CLI 同版本），越过了 peer 声明的上界 `<0.2.0`。**问题不在运行时**——代码在该宿主上实测全通（证据表见「版本支持声明 → `0.2.x` 的验证记录」）；问题在**对外声明与事实不符**三处：
+  1. peer 范围 `>=0.1.0-rc.6 <0.2.0` 覆盖不到 `0.2.x` 的正式版（`0.2.0`/`0.2.5` 判 invalid）；**注意**实测宿主 `0.2.1-rc.2` 属预发布，改写后的范围同样不覆盖它（semver 预发布规则，旧范围对 `0.1.7-rc.2` 也一样），见「版本支持声明」的说明；
+  2. README（中英）与本节都写「最高支持 `0.1.x`、`≥ 0.2.0` 未验证」；
+  3. 补丁脚本对「宿主文件里已有钉点字符串」只报 `already patched`，无法区分**脚本自己写的**与**宿主自带的**——两者的字节特征相同。
+- **决策**：`src/` / `lib/` **零改动**；本版只动支持声明、文档与补丁脚本的判据。理由：把「已验证」这一事实落到声明里，比为不存在的破坏性变更改代码更诚实——先证伪「0.2.x 不兼容」，再放宽范围。
+- **peer 上界取 `<0.3.0-0`**（而非 `<0.3.0`）：把 `0.3.0` 的预发布一并排除，避免自动跟进未验证的 0.3 线。
+- **判据变更（补丁脚本）**：「钉点产物是否在场」不足以区分宿主自带与脚本写入。改用**本脚本必留的 `.bak` 备份**，并加第二层校验：把脚本的 edits 重新应用到该 sidecar，必须逐字节还原当前文件才算 `already patched`；没有 sidecar（或 sidecar 复现不出来）一律判 `natively supported` 并逐字节不动。陈旧 sidecar 因此无法冒领。exit 0 不变。
+- **★ 本轮自己踩的坑（留痕）**：初判时我只看「宿主文件里有钉点字符串、且 grep 不到 `dsh-automode` 字样」，就断定「0.2.0+ 宿主原生支持 `icon`」，还把它写进了本节初稿与文档事实清单。**错的**——那个宿主文件是当天 22:10 我方脚本自己写的，隔壁就有 sidecar（前像 `spec.icon` 为 0）。两位子代理各自逐字节复核后驳回，我复核确认。教训：**判断「上游能力」必须排除自家写入**，只看「字符串在场」会把自家人写的当上游；文档事实清单发出前，该类断言要先落到「原件 vs 现装件」的 diff 上。已作废的表述见「版本支持声明 → `icon` 补丁在 `0.2.x` 上的现状」。
+- **不做的事（刻意）**：不给客户端半边猜新锚点；不把 `icon` 支持做成插件运行时能力（那是宿主职责）。宿主与客户端两半都原生支持后，脚本即可删除。
+- **本轮 E2E 结果表（2026-10-17，隔离实例：`HOME` 与 `DSH_HOME` 同时隔离，宿主 `0.2.1-rc.2`）**：
+
+  | # | 链 | 结果 | 证据 |
+  |---|---|---|---|
+  | A1 | 加载 | ✅ | composed 树出现 `- id: auto-mode`；隔离 home 审计日志首行 `event:boot … dsh-automode v0.17.0 active (failClosed=true, preExecute=true)` |
+  | A2 | 进入 auto mode | ✅ | 驱动走真实命令路径 `ctx.commands.execute(agent,'/auto')` → `command/run{name:"auto",source:{kind:"user"}}` → `command/done{kind:"success","Auto mode enabled."}` → `permission/preset{preset:"auto-mode"}`；注入落 `agent/inbox/spliced`/`user/message` 且 `source:{kind:"plugin:auto-mode"}` |
+  | A4 | allowPaths 提权桥接 | ✅ | 真实回合：`pre-execute-bashop(esc=true, cwd=/tmp/dsh-e2e-ws)` → `pre-execute-allow: one-token filter: routine/safe action` → `decision allowed-once`（reason 为提权理由原文）；目标文件 `/tmp/…/out.txt` 真的写出（内容 `hello-021`）；`turn/end{kind:completed}` |
+  | A5 | 会话格式 | ✅ | `npm run test:v4` PASS；活体消息里 `role:"tool"` ×2（v4 原生 tool 消息） |
+  | C | `auto-mode:allowlist` 段 | ✅（位置更正） | 出现在**模型可见的 runtime-context 消息**（`role:user`），不是宿主 `system/message`；宿主自己的 system prompt 里没有这一段 |
+  | A3 | deny 层活体拦下 | ⛔ 未跑（如实标注） | 为避开「让自主 agent 首次即申请全权限 + 执行删除类命令」，本轮提示只保留一条 `/tmp` 写文件命令；该形状被本插件分类器两次拒绝、熔断器跳闸后由用户授权的最简版通过。deny/删除守卫的命中改为**离线验证**（`mv /etc/<不存在路径>` 命中 deny 正则、`rm -rf /tmp/<不存在目录>` 命中删除守卫）。**结论：A3 在本宿主上未做活体验证，代码零改动，历史 0.1.7 轮次有活体记录** |
+  | B | 熔断跳闸注入 / 另一条权限探测分支 / 非 auto-mode 不干预 | — | 仍按既有结构断言替代（本轮未触及这些路径；理由同既往） |
+- **独立 review（2026-10-18）**：**无【严重】**；2【中等】+ 8【轻微】。逐条独立核验后处置：
+  - 【中等】**「在 `0.2.1-rc.2` 上通过类型检查」不成立** → **采纳（成立）**。`npm run typecheck` 跑的是仓库 devDependency `0.1.0-rc.8`；我用同一配方（`src`+`tsconfig` 复制到临时树、`@deepseek-ai/*` 指向 0.2.1）复现出 12 条类型错误。README 中英、spec 证据表全部改为如实表述，并新增「已知问题」条目 + 待办（TypeScript 面的修法留待后续版本，本版坚持 `src/` 零改动）。
+  - 【中等】**`<0.3.0-0` 并不覆盖实测宿主 `0.2.1-rc.2`** → **采纳（成立）**。用宿主自带 semver 实测：`0.2.1-rc.2` false、`0.2.0/0.2.5` true、`0.1.7-rc.2` 在旧范围下同样 false。README 中英、CHANGELOG 两半、spec 三处改为「覆盖 0.2.x **正式版**；预发布宿主受 semver 预发布规则限制不在范围内（旧范围对 0.1.7-rc.2 亦然）；实际经 profile link 安装不校验 peer」。
+  - 【轻微】**`native` 合流三种原因、措辞会误导** → **部分采纳**：提示语改为「no backup sidecar reproduces this file」（覆盖「无 sidecar」与「复现不出」两种），细分两种原因**不做**（方向安全、收益低），记入「已知问题」。
+  - 【轻微】**半原生宿主被静默判 native** → 采纳为已知限制：schemastery 的 `z.object` 不剥离未声明键，`optionOf` 仍拿得到 `icon`，丢的只是 schema 校验；记入「已知问题」，不在本版修。
+  - 【轻微】**预检通过但 `applyEdits` 失败时明细为空** → **采纳并修**：补兜底文案。
+  - 【轻微】**退出码 1 的定义与实现不一致** → **采纳并修**：头注释把「没找到目标」并入 1。
+  - 【轻微】**stale-sidecar 用例只跑 dry-run** → **采纳并修**：新增一条**真跑**用例，断言宿主字节与那份陈旧 sidecar 都逐字节不变（自测 30 → 31）。
+  - 【轻微】**一条只断言日志措辞** → 不改（相邻用例已做字节断言，单独看可接受）。
+  - 【轻微】**多 target 时尾部结论不精确 + `clientSettled` 含死分支** → **采纳并修**：`clientBroken` 优先于 `clientNeedsWork`，并删掉客户端的 `native` 死分支（附注释说明为何客户端不可能 native）。
+  - 【轻微】**README 测试清单没跟上 / spec 新增行进本机 provider 名** → 前者**已修**（中英）；后者**有意保留**：spec 是设计真相，同类信息在既有条目里本就有，隐私门禁（tracked 树）已通过。
+  - review 中「补丁安全面未退化」「native/already 判据没有现实的冒领路径」「新测试经变异实测确实会变红」「中英等价」「semver 上界正确」等结论我逐条复核认可。
+- **血经验（本轮，供下次复用）**：① 隔离 home 若在 `~/.dsh-e2e`（工作区外），子代理与主代理都写不进去，`launch` 必须由有提权的一侧执行；② 真回合的路由必须显式给 `E2E_PROVIDER/E2E_MODEL`，且**该 provider 必须在隔离 profile 里有适配器**——`ocg-1` 在 base 配置里没有适配器（`NO_ADAPTER`），`opencode-go-chat` 无 `deepseek-flash`（`UNKNOWN_MODEL`），本机可用的是 `deepseek-official/deepseek-flash`；③ 隔离实例的 `decisions.jsonl` 里可能有**上一轮旧宿主**的 `pre-execute-allow`/`decision` 行（时间戳与会话 ID 不同），取增量时必须按时间戳切开，否则会把旧证据当本轮绿证。
+- **发布**：MINOR（`feat`）—— 对使用者是「支持范围变宽」，插件审批行为无变化。
 
 ### v0.16.1（2026-09-28）：`ask_user_question` 答复在 dsh ≥ 0.1.7-rc.2 上不再进入意图窗口（已实现）
 

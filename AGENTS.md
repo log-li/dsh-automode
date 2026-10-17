@@ -11,8 +11,8 @@ DSH 生态插件：**自主审批（auto mode）**——确定性频带 + pre-ex
 - **host 半边插件，无 client 半边**：`package.json` 的 `dsh.bundle.patch: ./cordis.patch.yml` 挂载自身，
   加入 profile 的 `dsh.profile.bundles` 即生效。**同一入口只能有一条注册路径**——bundle 路径与
   `cordis.patch.yml` 里手写 `insert` 不得同时存在（`duplicate loader entry id` 会启动即崩）。
-- **peer 范围**：`@deepseek-ai/dsh-*` 为 `>=0.1.0-rc.6 <0.2.0`。**`≥0.2.0` 未验证**——只有对新内核
-  实测通过后才上调（见 spec §版本支持声明）。
+- **peer 范围**：`@deepseek-ai/dsh-*` 为 `>=0.1.0-rc.6 <0.3.0-0`。`0.2.x` 已实测（`0.2.1-rc.2`）；
+  **`≥0.3.0` 未验证**——只有对新内核实测通过后才上调（见 spec §版本支持声明）。
 - **权限事实双探测**：`0.1.0-rc.6–0.1.4.x` 读会话事件日志，`≥0.1.5-rc.1` 读会话权限投影；
   兼容层用 namespace-import + 运行时 `typeof` 探测，**不在模块加载期假定宿主导出存在**
   （宿主移除 legacy 导出会直接拖垮整个 plugin tree）。
@@ -55,7 +55,8 @@ npm run build         # src → lib；**lib/ 入库，改 src 后必须 build �
 npm run typecheck
 npm test              # smoke（含 README 政策措辞守卫 + CHANGELOG 当前版本段守卫 + Release notes 双语断言 +
                       # tracked 树隐私断言）+ 补丁自测（scripts/patch-icon.test.mjs）
-npm run test:patch    # 单独跑补丁自测：合成 fixture + 本机真实 0.1.7 产物副本（apply/幂等/node --check/篡改红对照）
+npm run test:patch    # 单独跑补丁自测：合成 fixture + 本机真实 DSH 产物副本（apply/幂等/native 与
+                      # already patched 判定/node --check/篡改红对照）
 npm run test:flow     # approval 桥接流程
 npm run test:compose  # 复合命令写目标提取
 npm run test:pathtrust

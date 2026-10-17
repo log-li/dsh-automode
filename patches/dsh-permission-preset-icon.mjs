@@ -7,13 +7,20 @@
  * Stock DSH hardcodes the permission-picker glyphs in the client bundle, so a
  * host-configured preset like `auto-mode` renders the generic shield (or no
  * glyph at all) and its `icon` field is silently ignored. This patch makes
- * `icon` a real field on both halves of the DSH 0.1.7-rc.2 line:
+ * `icon` a real field on both halves of the permission-preset packages:
  *
  *   - Host (`dsh-permission-presets`): the preset config schema accepts an
  *     `icon` string, and `optionOf()` passes it through to the catalog.
  *   - Client (`dsh-client-ui-permission-presets`): an option that declares an
  *     `icon` renders that SVG path inside the design set's shield outline; the
  *     built-in trio keep their hardcoded glyph map as the fallback.
+ *
+ * Both halves still need this patch on the `0.2.x` line as this script was last
+ * verified (`0.2.1-rc.2`): that release ships the host schema without `icon`,
+ * `optionOf()` without the passthrough, and a client bundle with the hardcoded
+ * `permissionGlyphs` map. A future DSH that ships the host side itself is
+ * detected and reported as `natively supported` (see below) instead of being
+ * silently credited to this script.
  *
  * No wire change is needed: `permissionPresets.catalog` crosses the typert
  * boundary with a result codec that declares neither `encode` nor `decode`, so
@@ -28,12 +35,26 @@
  *   silently.
  * - **It is cosmetic.** `auto-mode` behaves identically whether the bolt
  *   renders. If you do not care about the glyph, do not run this at all.
- * - **Anchors are matched against the DSH 0.1.7-rc.2 line.** Earlier 0.1.x lines
- *   are skipped with a note (their picker lives in a different package, so the
- *   anchors can never match) and exit 0; any other release — a newer one, or one
- *   whose layout this script cannot read — is left byte-identical and reported
- *   with the anchor that missed. At that point the `icon` field is either
- *   supported natively (delete this script) or the anchors need updating.
+ * - **A host file that already looks patched is not necessarily ours.** The
+ *   host edit's output text (`...spec.icon !== void 0 ? { icon: spec.icon } : {}`)
+ *   is ordinary DSH code, so a DSH release that grows native support produces
+ *   exactly the bytes this script writes. Credit is therefore settled by the
+ *   backup sidecar this script writes *before* it edits a file: a host file that
+ *   carries the passthrough **and** has a `.pre-dsh-automode-icon.bak` whose text
+ *   this script's edits turn back into the current bytes was patched here
+ *   (`already patched`); one that carries the passthrough **without** such proof
+ *   is stock DSH (`natively supported`, nothing written, file byte-identical).
+ *   Both are exit 0. The client half has no such ambiguity — its marker is this
+ *   script's own text — so it is only ever `patched` / `already patched`.
+ * - **Delete this script once both halves are native.** The host half is the half
+ *   that can become native first; the client half is the remaining reason to keep
+ *   running this. A file that matches neither the native shape nor the anchors is
+ *   left byte-identical and reported with the anchor that missed — that is the
+ *   moment to check whether DSH grew client-side `icon` support, and to delete
+ *   this script if it did.
+ * - **Anchors are matched against the 0.1.7-rc.2 line and later.** Earlier 0.1.x
+ *   lines are skipped with a note (their picker lives in a different package, so
+ *   the anchors can never match) and exit 0.
  *
  * ## Usage
  *
@@ -41,10 +62,13 @@
  *   node patches/dsh-permission-preset-icon.mjs --dry-run        # report only
  *   node patches/dsh-permission-preset-icon.mjs --profile web    # one profile only
  *
- * Exit status: `0` = everything matched (patched, already patched, or nothing of
- * this generation installed), `1` = at least one anchor missed and that file was
- * left untouched, `2` = bad usage. Each rewritten file keeps a pristine copy at
- * `<file>.pre-dsh-automode-icon.bak`.
+ * Exit status: `0` = nothing went wrong (patched, would patch, already patched,
+ * natively supported, or nothing of this generation installed), `1` = something
+ * needs a human (at least one anchor missed — that file was left untouched — or
+ * no target file was found at all, e.g. a `--profile` name that does not exist),
+ * `2` = bad usage. Each rewritten file keeps a pristine copy at
+ * `<file>.pre-dsh-automode-icon.bak` — which is also the evidence that separates
+ * `already patched` from `natively supported`.
  *
  * Then restart `dsh web` (the host half is read at boot; the client half is
  * re-read on a page reload).
@@ -197,13 +221,14 @@ function versionOf(file) {
 }
 
 /**
- * Compare an installed version with the 0.1.7 line these anchors describe.
+ * Compare an installed version with the 0.1.7 line these anchors were written
+ * against.
  *
  * `-1` = an older generation (its picker lives in a different package and its
  * schema has different indentation, so the anchors can never match — skipping it
- * quietly keeps `apply-dsh-patches.sh` output honest); `0` = the targeted line;
- * `1` = newer or unparseable, so the anchors still get their chance and a miss is
- * reported loudly.
+ * quietly keeps `apply-dsh-patches.sh` output honest); `0` or `1` = the targeted
+ * line or anything newer (0.2.x included), where the anchors, the `native`
+ * detection or a loud miss decide what happens.
  */
 function lineOf(version) {
   const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version)
@@ -224,23 +249,57 @@ function countOf(haystack, needle) {
 }
 
 /**
+ * Re-apply `edits` to `source` and say whether that reproduces `target` exactly.
+ *
+ * Used only to attribute an existing marker: the `.bak` sidecar holds this
+ * script's pre-image, so `applyEdits(backup) === file` proves this script wrote
+ * the current bytes. A leftover sidecar from some older patched generation
+ * cannot reproduce the file, and is therefore not accepted as proof.
+ */
+function applyEdits(source, edits) {
+  let out = source
+  for (const edit of edits) {
+    if (countOf(out, edit.find) !== edit.expect) return undefined
+    out = out.split(edit.find).join(edit.replace)
+  }
+  return out
+}
+
+/**
  * Apply one file's edits, all or nothing.
  *
  * Every anchor is checked against the *current* text first; a single miss means
  * the file is reported and left byte-identical, so a partially patched bundle
  * can never be left behind.
  *
+ * A marker already present is attributed with `backupProvesIt`, not assumed: see
+ * the "host file that already looks patched" note in the header.
+ *
  * @param file - absolute path to the built artifact.
  * @param edits - ordered `{ name, find, replace, expect }` edits.
  * @param marker - text that identifies this patch's output.
  * @param legacy - text that identifies an older/foreign injection to refuse.
+ * @param backupProvesIt - `true` when the marker text could also be stock DSH's
+ *   own code (the host half); the `.bak` sidecar is then the only acceptable
+ *   proof that this script wrote the file.
  * @returns `{ outcome, detail }` with outcome one of `patched` / `would-patch` /
- * `already` / `anchor-missing` / `legacy`.
+ * `already` / `native` / `anchor-missing` / `legacy`.
  */
-function patchFile(file, edits, marker, legacy) {
+function patchFile(file, edits, marker, legacy, backupProvesIt) {
   let source = readFileSync(file, 'utf8')
 
-  if (source.includes(marker)) return { outcome: 'already' }
+  if (source.includes(marker)) {
+    if (backupProvesIt !== true) return { outcome: 'already' }
+    const backup = `${file}${BACKUP_SUFFIX}`
+    if (!existsSync(backup)) return { outcome: 'native' }
+    let previous
+    try {
+      previous = readFileSync(backup, 'utf8')
+    } catch {
+      return { outcome: 'native' }
+    }
+    return applyEdits(previous, edits) === source ? { outcome: 'already' } : { outcome: 'native' }
+  }
   if (legacy !== undefined) {
     const hit = legacy.patterns.find((pattern) => source.includes(pattern))
     if (hit !== undefined) return { outcome: 'legacy', detail: legacy.detail }
@@ -249,17 +308,22 @@ function patchFile(file, edits, marker, legacy) {
   const missing = []
   for (const edit of edits) {
     const seen = countOf(source, edit.find)
-    if (seen !== edit.expect) {
-      missing.push(`${edit.name} — anchor ×${seen}, expected ×${edit.expect}`)
-      continue
-    }
-    source = source.split(edit.find).join(edit.replace)
+    if (seen !== edit.expect) missing.push(`${edit.name} — anchor ×${seen}, expected ×${edit.expect}`)
   }
-  if (missing.length > 0) return { outcome: 'anchor-missing', detail: missing }
+  const patched = missing.length === 0 ? applyEdits(source, edits) : undefined
+  if (patched === undefined) {
+    return {
+      outcome: 'anchor-missing',
+      detail:
+        missing.length > 0
+          ? missing
+          : ['the anchors each matched, but applying them in order did not reproduce a result — one edit is affecting another'],
+    }
+  }
 
   if (!DRY) {
     writeFileSync(`${file}${BACKUP_SUFFIX}`, readFileSync(file))
-    writeFileSync(file, source)
+    writeFileSync(file, patched)
   }
   return { outcome: DRY ? 'would-patch' : 'patched' }
 }
@@ -268,6 +332,10 @@ function patchFile(file, edits, marker, legacy) {
 // Host half — the preset schema accepts `icon`, `optionOf()` forwards it.
 // ---------------------------------------------------------------------------
 
+// NOTE: this marker is ordinary DSH code, so a host release that supports
+// preset `icon` itself carries the very same text. That is why a host file is
+// only called `already patched` when the `.bak` sidecar reproduces it — see
+// `patchFile`'s `backupProvesIt`.
 const HOST_MARKER = '...spec.icon !== void 0 ? { icon: spec.icon } : {}'
 const HOST_EDITS = [
   {
@@ -361,6 +429,7 @@ const CLIENT_LEGACY = {
 const LABEL = {
   patched: 'patched',
   'would-patch': 'would patch',
+  native: 'natively supported',
   already: 'already patched',
   'anchor-missing': 'ANCHORS NOT FOUND (left untouched)',
   legacy: 'REFUSED (left untouched)',
@@ -374,10 +443,12 @@ function main() {
   let missing = 0
   let found = 0
   let older = 0
+  let nativeHost = 0
+  const clientOutcomes = []
 
-  for (const [pkg, rel, edits, marker, legacy] of [
-    [HOST_PKG, join('lib', 'index.js'), HOST_EDITS, HOST_MARKER, undefined],
-    [CLIENT_PKG, join('lib', 'client.js'), CLIENT_EDITS, CLIENT_MARKER, CLIENT_LEGACY],
+  for (const [pkg, rel, edits, marker, legacy, backupProvesIt] of [
+    [HOST_PKG, join('lib', 'index.js'), HOST_EDITS, HOST_MARKER, undefined, true],
+    [CLIENT_PKG, join('lib', 'client.js'), CLIENT_EDITS, CLIENT_MARKER, CLIENT_LEGACY, false],
   ]) {
     const targets = findTargets(pkg, rel)
     if (targets.length === 0) {
@@ -394,9 +465,11 @@ function main() {
         continue
       }
       found++
-      const { outcome, detail } = patchFile(file, edits, marker, legacy)
+      const { outcome, detail } = patchFile(file, edits, marker, legacy, backupProvesIt)
       if (outcome === 'patched' || outcome === 'would-patch') touched++
       if (outcome === 'anchor-missing' || outcome === 'legacy') missing++
+      if (outcome === 'native') nativeHost++
+      if (pkg === CLIENT_PKG) clientOutcomes.push(outcome)
       console.log(`${LABEL[outcome]}${where}${through}`)
       if (outcome === 'legacy') console.log(`      - ${detail}`)
       else for (const line of detail ?? []) console.log(`      - ${line}`)
@@ -405,22 +478,49 @@ function main() {
 
   if (missing > 0) {
     console.log(
-      `\n${missing} file(s) did not match this patch's anchors — either DSH moved off the 0.1.7-rc.2 line or the file\n` +
-        'was already modified by something else. Nothing was corrupted: those files were left byte-identical.\n' +
-        'Check whether the permission picker reads preset `icon`s natively now; if it does, delete this script.',
+      `\n${missing} file(s) did not match this patch's anchors — either DSH moved off the line these anchors\n` +
+        'describe (0.1.7-rc.2 and later) or the file was already modified by something else. Nothing was\n' +
+        'corrupted: those files were left byte-identical. Check whether the permission picker reads preset\n' +
+        '`icon`s natively now; if it does on both halves, delete this script.',
     )
   }
   if (found === 0) {
     if (older > 0) {
-      console.log('\nNothing to do — only older DSH lines are installed (this patch targets 0.1.7-rc.2 and later).')
+      console.log('\nNothing to do — only older DSH lines are installed (these anchors target 0.1.7-rc.2 and later).')
       return 0
     }
     console.log('\nNothing to patch: neither @deepseek-ai package was installed for any profile.')
     return 1
   }
+
+  if (nativeHost > 0) {
+    console.log(
+      '\nHost half: natively supported by this DSH line — the passthrough found there is DSH\'s own code, not\n' +
+        "this patch's output (no backup sidecar reproduces this file), so there is nothing to patch and nothing was written.",
+    )
+    const clientNeedsWork = clientOutcomes.some((outcome) => outcome === 'patched' || outcome === 'would-patch')
+    const clientBroken = clientOutcomes.some((outcome) => outcome === 'anchor-missing' || outcome === 'legacy')
+    // The client half is judged by this script's own marker, so it can only be
+    // `already` here — `native` is a host-half outcome (backupProvesIt === false).
+    const clientSettled = clientOutcomes.some((outcome) => outcome === 'already')
+    if (clientBroken) {
+      console.log('Client half: left untouched — the anchor problem above has to be settled before it can be patched.')
+    } else if (clientNeedsWork) {
+      console.log(
+        `Client half: still needs this patch on this line — ${
+          DRY ? 'it would be patched; re-run without --dry-run to apply it.' : 'patched above.'
+        }`,
+      )
+    } else if (clientSettled) {
+      console.log('Client half: already patched by this script, nothing rewritten.')
+    }
+  }
+
   console.log(
     touched === 0 && missing === 0
-      ? '\nNothing to do — already applied.'
+      ? nativeHost > 0
+        ? '\nNothing to do — no file needed a change.'
+        : '\nNothing to do — already applied.'
       : `\nDone${DRY ? ' (dry run, nothing written)' : ''}. Restart \`dsh web\` so the host half is reloaded; reload the page for the client half.`,
   )
   return missing > 0 ? 1 : 0

@@ -7,6 +7,15 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ### Changed
 - (track upcoming changes here; moved into a dated version section at release time — Keep a Changelog)
 
+## [0.17.0] — 2026-10-17
+
+### Changed
+- **`dsh` 0.2.x is supported: the peer range now ends at `<0.3.0-0`.** The `@deepseek-ai/dsh-*` peer ranges moved up from `<0.2.0`, so the 0.2 **release** line resolves cleanly again. npm's prerelease rule still excludes prerelease hosts — the tested `0.2.1-rc.2` included, exactly as the old bound excluded `0.1.7-rc.2` — and installing through a profile does not evaluate peer ranges at all. On `0.2.1-rc.2` the session format is still v4, and the permission, approval and sandbox exports the plugin probes at runtime are all still there, so auto mode behaves as it did on the 0.1 line. Nothing in the plugin runtime changed for this; the supported span is now `0.1.0-rc.6` through `0.2.x`.
+- **The icon patch still patches both halves on `0.2.x`, and now distinguishes a host that ships the passthrough itself from a file it patched.** On `0.2.1-rc.2` neither side reads a preset `icon`: the host preset schema has no `icon` field, `optionOf()` forwards none, and the client bundle still hardcodes its three glyphs, so both halves are rewritten as before. A host that carries the passthrough itself is reported as `natively supported` and left byte-identical instead of being rewritten. Once a DSH release reads preset `icon`s in its client too, delete the script.
+
+### Fixed
+- **`already patched` now means this script really wrote that file.** On the host half it is reported only when the backup sidecar plus the script's own edits reproduce the current bytes, so a stale or foreign backup cannot pass for it. Previously a host file that already carried the `icon` fields — whether the script or the host itself put them there — was reported as `already patched`, as if the script had written it.
+
 ## [0.16.1] — 2026-09-28
 
 ### Fixed
@@ -131,6 +140,15 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [Unreleased]
 
 （发布前在此跟踪变更；发布时移入带日期的版本段——Keep a Changelog）
+
+## [0.17.0] — 2026-10-17
+
+### 变更
+- **现在支持 `dsh` 0.2.x，peer 上界移到 `<0.3.0-0`。** 各 `@deepseek-ai/dsh-*` 的 peer 范围从 `<0.2.0` 放宽到 `<0.3.0-0`，0.2 的**正式版**因此能正常解析。按 npm 的预发布规则，预发布宿主（包括实测的 `0.2.1-rc.2`）仍不在范围内——旧上界对 `0.1.7-rc.2` 也是同样的结果；而经 profile 安装根本不校验 peer 范围。在 `0.2.1-rc.2` 上会话格式仍是 v4，插件运行时探测的权限、审批与沙箱导出也都还在，所以 auto mode 的行为与 0.1 线一致。插件运行时本身没有为此改动；现在支持的跨度是 `0.1.0-rc.6` 到 `0.2.x`。
+- **图标补丁在 `0.2.x` 上仍两半都打，并把「宿主自己就提供透传」与「脚本写过的文件」区分开。** `0.2.1-rc.2` 上两边都不读预设 `icon`：宿主预设 schema 没有 `icon` 字段、`optionOf()` 不透传、客户端 bundle 仍写死三档内置 glyph，所以两半照旧改写。宿主自己就带透传的，报 `natively supported`、逐字节不动，不会被改写。等某一代 DSH 的客户端也开始读预设 `icon`，删掉脚本即可。
+
+### 修复
+- **`already patched` 现在只在脚本真的写过那个文件时出现。** 宿主半边只有在备份加脚本自己的改动能复现当前字节时才这么报，陈旧或外来的备份骗不过它。以前某个已带 `icon` 字段的宿主文件——不管是脚本还是宿主自己写进去的——都会被报成 `already patched`，像是脚本的功劳。
 
 ## [0.16.1] — 2026-09-28
 

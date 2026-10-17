@@ -55,7 +55,7 @@ Restart `dsh web` after installing. The permission picker (bottom-left of the ch
 
 ### Optional: the ⚡ glyph in the permission picker
 
-The `auto-mode` preset declares an `icon`, but **stock DSH hardcodes the three built-in glyphs and silently ignores a preset's `icon`** — so the bolt only appears if you also apply the shipped patch:
+The `auto-mode` preset declares an `icon`, but **stock DSH ignores a preset's `icon` on both sides**: the host preset schema has no `icon` field and `optionOf()` forwards none, and the client bundle hardcodes the three built-in glyphs. So the bolt renders only after you apply the shipped patch, which adds the schema field, forwards the value to the client catalog, and teaches the client to draw it:
 
 ```bash
 # <profile> is your DSH profile name (usually `web`). Any profile's copy works:
@@ -73,9 +73,9 @@ Then restart `dsh web`.
 
 - **It is cosmetic.** `auto-mode` behaves identically whether the bolt renders. Skip it if you do not care.
 - **Every `npm update @deepseek-ai/dsh` or plugin reinstall wipes it** — re-run the script afterwards. It never half-applies: every anchor is checked first, and a file whose anchors no longer match is reported (`ANCHORS NOT FOUND`) and left byte-identical.
-- **Rollback is a file copy.** Each file it rewrites is backed up first as `<file>.pre-dsh-automode-icon.bak` next to the original; re-running is a no-op (`already patched`).
-- **It targets the DSH 0.1.7-rc.2 line.** Older 0.1.x lines are skipped with a note (their picker lives in a different package, so the anchors can never match). A newer release is tried against the anchors — if they miss, its files stay byte-identical and the report names the anchor that missed. If a future DSH supports preset `icon`s natively, delete the script.
-- `npm run test:patch` (part of `npm test`) covers apply / idempotency / dry-run / anchor-miss / foreign-injection / bad usage against synthetic fixtures, and — when a 0.1.7 install exists — against copies of the real artifacts (`node --check` on both patched files).
+- **Rollback is a file copy.** Each file it rewrites is backed up first as `<file>.pre-dsh-automode-icon.bak` next to the original, and re-running is a no-op. `already patched` means this script itself wrote that file: on the host half it is reported only when the backup plus the script's own edits reproduce the current bytes, so a stale or foreign backup cannot pass for it. A host that ships the `icon` passthrough itself is reported as `natively supported` and left byte-identical.
+- **It covers the `0.1.7-rc.2` line through `0.2.x`, patching both halves.** DSH lines older than `0.1.7` are skipped with a note (their picker lives in a different package, so the anchors can never match). `0.2.1-rc.2` still needs both halves, because neither the host schema nor the client reads a preset `icon` there. A file whose anchors no longer match is left byte-identical, and the report names the anchor that missed. If a future DSH ships the host passthrough itself, that half is reported as `natively supported`; once the client draws preset `icon`s too, delete the script.
+- `npm run test:patch` (part of `npm test`) covers apply / idempotency / dry-run / anchor-miss / foreign-injection / bad usage, the `natively supported` versus `already patched` split (including a stale sidecar that must not pass for the script's own work), and byte-level assertions that a wrong verdict writes nothing — against synthetic fixtures, and — when a real DSH install is present on this machine — against copies of the real artifacts (`node --check` on both patched files).
 
 
 ## Commands
@@ -195,7 +195,7 @@ The `auto-mode` preset ships a bolt glyph in the permission picker. Set your own
         icon: '<your-svg-path-d>'   # default bolt: 'M9.15 3.4L5.85 8.55H7.95L7.05 12.6L10.45 7.25H8.25L9.15 3.4Z'
 ```
 
-The icon is **cosmetic** — behavior is identical whether it renders. It shows only on DSH versions that read preset `icon`s (stock DSH ignores it; the patch shipped in [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) enables it — see [Install](#optional-the--glyph-in-the-permission-picker)). It renders in the picker menu and the current-value trigger; the General-settings default row is text-only. Leave `icon` unset for the default bolt.
+The icon is **cosmetic** — behavior is identical whether it renders. It shows only after the patch shipped in [`patches/dsh-permission-preset-icon.mjs`](patches/dsh-permission-preset-icon.mjs) adds the schema field, forwards the value to the client and teaches the client to draw it — see [Install](#optional-the--glyph-in-the-permission-picker). It renders in the picker menu and the current-value trigger; the General-settings default row is text-only. Leave `icon` unset for the default bolt.
 
 ### Two-stage classifier
 
@@ -285,18 +285,23 @@ src/
 
 ## Compatibility & contributions
 
-**Supported dsh versions: `0.1.0-rc.6` – `0.1.x`** (peer range `>=0.1.0-rc.6 <0.2.0`). Permission facts (preset / sandbox / approval) are read through two auto-detected paths:
+**Supported dsh versions: `0.1.0-rc.6` – `0.2.x`** (peer range `>=0.1.0-rc.6 <0.3.0-0`); the current 0.2 line is tested on `0.2.1-rc.2`. Two caveats worth stating plainly:
+
+- The peer range covers `0.2.x` **release** versions. npm's prerelease rule keeps every prerelease host — including the tested `0.2.1-rc.2` — outside a range whose comparators carry the `0.1.0-rc.6` preid; the previous `<0.2.0` bound behaved the same way for `0.1.7-rc.2`. Installing through a profile (`dsh plugin add` / `link:`) does not evaluate peer ranges, so prerelease hosts work in practice.
+- `npm run typecheck` compiles against this repo's dev dependency (`@deepseek-ai/dsh-*` 0.1.0-rc.8), not against the host you run. Pointed at `0.2.1-rc.2`'s `.d.ts`, tsc reports type drift in the v3 compatibility branch (its `ContentBlockMap` no longer has `tool-result`) and in the `agent/created` handler's return type. Both are compile-time only: the branch is unreachable on 0.2.x and the handler returns `undefined`, which the new mode accepts. Runtime behaviour is unaffected.
+
+Permission facts (preset / sandbox / approval) are read through two auto-detected paths:
 
 | dsh version | permission read path |
 |---|---|
 | `0.1.0-rc.6` – `0.1.4.x` | `session.events` event log (`effectivePermissionPreset` & co.) |
 | `≥ 0.1.5-rc.1` | durable `permissions` session projection (`ctx.sessionProjections.stateOf`) |
 
-dsh `0.1.5-rc.1` removed the `session.events` accessor — without the projection path every auto-mode turn died with `Cannot read properties of undefined (reading 'length')` while the system prompt was assembled (fixed in v0.11.2). **dsh `≥ 0.2.0` is not yet verified** — bump the peer range only after testing against a new core.
+dsh `0.1.5-rc.1` removed the `session.events` accessor — without the projection path every auto-mode turn died with `Cannot read properties of undefined (reading 'length')` while the system prompt was assembled (fixed in v0.11.2). Every host export the plugin probes for at runtime is present on `0.2.1-rc.2`: `setApprovalPolicy`, `setSandboxMode`, `PermissionPresetService` (with `current` / `set` / `derive` / `optionOf`) and the service name `permissionPresets`.
 
-DSH session format v4 (`dsh ≥ 0.1.7-alpha.1`) retired the catch-all `plugin` message-source kind and refuses it on every durable message slot. Injected messages carry this plugin's own source kind instead — the same identity the v3 → v4 session-log migration rewrites older records to, so both format generations accept it and no version probing is needed (fixed in v0.15.4).
+DSH session format v4 (`dsh ≥ 0.1.7-alpha.1`) retired the catch-all `plugin` message-source kind and refuses it on every durable message slot. Injected messages carry this plugin's own source kind instead — the same identity the v3 → v4 session-log migration rewrites older records to, so both format generations accept it and no version probing is needed (fixed in v0.15.4). The format is still v4 on `0.2.x`; there is no v5, and the v3 → v4 migration is still accepted there.
 
-The same format change moved tool results from a user-message wrapper to a first-class `tool` message. Both shapes are read when recovering the user's intent, so your answer to `ask_user_question` counts as an authorization on either generation (fixed in v0.16.1).
+The same format change moved tool results from a user-message wrapper to a first-class `tool` message. Both shapes are read when recovering the user's intent, so your answer to `ask_user_question` counts as an authorization on either generation (fixed in v0.16.1, still correct on `0.2.1-rc.2`).
 - **Verified on macOS only.** Tested against the macOS filesystem, the [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) runtime, and the DSH version in use at development time. Path semantics — including the macOS `/tmp` → `/private/tmp` symlink (handled by realpath-nearest-ancestor resolution) and workspace-path trust — have **not** been verified on Linux or Windows, and deny-pattern/path matching may differ there.
 - **Found a bug, or an issue on another platform?** Bug reports and pull requests are welcome — open an issue or PR at [github.com/log-li/dsh-automode](https://github.com/log-li/dsh-automode).
 
