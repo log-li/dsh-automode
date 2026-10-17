@@ -234,7 +234,7 @@ src/
 
 ## 版本支持声明
 
-**支持的 dsh 版本：`0.1.0-rc.6` – `0.2.x`**（peer 范围 `>=0.1.0-rc.6 <0.3.0-0`；`0.2.x` 的实测版本为 `0.2.1-rc.2`）。**范围只覆盖 `0.2.x` 的正式版**：按 npm 的预发布规则，预发布宿主（含 `0.2.1-rc.2`）不落在比较器带 `0.1.0-rc.6` preid 的范围里——原来的 `<0.2.0` 对 `0.1.7-rc.2` 也是同样结果，属既有语义不是本次回归；实际安装走 profile link（不校验 peer），所以预发布宿主可用。权限事实经两条自动探测的读取路径获取：
+**支持的 dsh 版本：`0.1.0-rc.6` – `0.2.x`**（peer 范围 `>=0.1.0-rc.6 <0.3.0-0`；`0.2.x` 的实测版本为 `0.2.1-rc.2`）。**范围只覆盖 `0.2.x` 的正式版**：按 npm 的预发布规则，预发布宿主（含 `0.2.1-rc.2`）不落在比较器带 `0.1.0-rc.6` preid 的范围里——原来的 `<0.2.0` 对 `0.1.7-rc.2` 也是同样结果，属既有语义不是本次回归；`dsh plugin add` 底层是 pnpm，**会评估**该范围并打 unmet peer 警告但照装（实测 12.4.1：`Issues with peer dependencies found` + exit 0），npm 式安装则以 `ERESOLVE` 硬失败——所以预发布宿主经 profile 可用，但会看到警告。权限事实经两条自动探测的读取路径获取：
 
 | dsh 版本 | 权限读取路径 |
 |---|---|
@@ -615,7 +615,8 @@ scripts/e2e-isolated-home.sh reset                 # 清 sessions + 审计记录
   | B | 熔断跳闸注入 / 另一条权限探测分支 / 非 auto-mode 不干预 | — | 仍按既有结构断言替代（本轮未触及这些路径；理由同既往） |
 - **独立 review（2026-10-18）**：**无【严重】**；2【中等】+ 8【轻微】。逐条独立核验后处置：
   - 【中等】**「在 `0.2.1-rc.2` 上通过类型检查」不成立** → **采纳（成立）**。`npm run typecheck` 跑的是仓库 devDependency `0.1.0-rc.8`；我用同一配方（`src`+`tsconfig` 复制到临时树、`@deepseek-ai/*` 指向 0.2.1）复现出 12 条类型错误。README 中英、spec 证据表全部改为如实表述，并新增「已知问题」条目 + 待办（TypeScript 面的修法留待后续版本，本版坚持 `src/` 零改动）。
-  - 【中等】**`<0.3.0-0` 并不覆盖实测宿主 `0.2.1-rc.2`** → **采纳（成立）**。用宿主自带 semver 实测：`0.2.1-rc.2` false、`0.2.0/0.2.5` true、`0.1.7-rc.2` 在旧范围下同样 false。README 中英、CHANGELOG 两半、spec 三处改为「覆盖 0.2.x **正式版**；预发布宿主受 semver 预发布规则限制不在范围内（旧范围对 0.1.7-rc.2 亦然）；实际经 profile link 安装不校验 peer」。
+  - 【中等】**`<0.3.0-0` 并不覆盖实测宿主 `0.2.1-rc.2`** → **采纳（成立）**。用宿主自带 semver 实测：`0.2.1-rc.2` false、`0.2.0/0.2.5` true、`0.1.7-rc.2` 在旧范围下同样 false。README 中英、CHANGELOG 两半、spec 三处改为「覆盖 0.2.x **正式版**；预发布宿主受 semver 预发布规则限制不在范围内（旧范围对 0.1.7-rc.2 亦然）；`dsh plugin add`（pnpm）评估范围但只告警照装，npm 式安装硬失败」。
+  - 【中等·跨家族 review 追加】**「经 profile 安装不校验 peer 范围」这句被实测推翻** → **采纳（成立）**。我用 pnpm 12.4.1 复现：`file:` 依赖 + `peerDependencies: host >=0.1.0-rc.6 <0.3.0-0`、host 版本 `0.2.1-rc.2` → 输出 `[WARN] Issues with peer dependencies found` 且 exit 0、依赖照装。即「结论（预发布宿主可用）」成立，但「机制（根本不校验）」是错的；四处措辞已改，见上一条。
   - 【轻微】**`native` 合流三种原因、措辞会误导** → **部分采纳**：提示语改为「no backup sidecar reproduces this file」（覆盖「无 sidecar」与「复现不出」两种），细分两种原因**不做**（方向安全、收益低），记入「已知问题」。
   - 【轻微】**半原生宿主被静默判 native** → 采纳为已知限制：schemastery 的 `z.object` 不剥离未声明键，`optionOf` 仍拿得到 `icon`，丢的只是 schema 校验；记入「已知问题」，不在本版修。
   - 【轻微】**预检通过但 `applyEdits` 失败时明细为空** → **采纳并修**：补兜底文案。
@@ -625,6 +626,7 @@ scripts/e2e-isolated-home.sh reset                 # 清 sessions + 审计记录
   - 【轻微】**多 target 时尾部结论不精确 + `clientSettled` 含死分支** → **采纳并修**：`clientBroken` 优先于 `clientNeedsWork`，并删掉客户端的 `native` 死分支（附注释说明为何客户端不可能 native）。
   - 【轻微】**README 测试清单没跟上 / spec 新增行进本机 provider 名** → 前者**已修**（中英）；后者**有意保留**：spec 是设计真相，同类信息在既有条目里本就有，隐私门禁（tracked 树）已通过。
   - review 中「补丁安全面未退化」「native/already 判据没有现实的冒领路径」「新测试经变异实测确实会变红」「中英等价」「semver 上界正确」等结论我逐条复核认可。
+  - **第二轮：跨模型家族 review（GLM 5.3 Flash，2026-10-18）**：同样**无【严重】**；追加 1【中等】（上方「经 profile 安装不校验 peer」）已实测复现并修，2【轻微】（归属判据是 UTF-8 文本比较、计数检查缺 count≥2 用例）分别按「加半句说明」与「不修（非承重：误判只影响措辞，两条分支都不写文件）」处置。该轮还独立复现了「12 条类型漂移」（其探针多出 3 条布局伪象，用同布局对照组剔除后与记录精确一致）。
 - **血经验（本轮，供下次复用）**：① 隔离 home 若在 `~/.dsh-e2e`（工作区外），子代理与主代理都写不进去，`launch` 必须由有提权的一侧执行；② 真回合的路由必须显式给 `E2E_PROVIDER/E2E_MODEL`，且**该 provider 必须在隔离 profile 里有适配器**——`ocg-1` 在 base 配置里没有适配器（`NO_ADAPTER`），`opencode-go-chat` 无 `deepseek-flash`（`UNKNOWN_MODEL`），本机可用的是 `deepseek-official/deepseek-flash`；③ 隔离实例的 `decisions.jsonl` 里可能有**上一轮旧宿主**的 `pre-execute-allow`/`decision` 行（时间戳与会话 ID 不同），取增量时必须按时间戳切开，否则会把旧证据当本轮绿证。
 - **发布**：MINOR（`feat`）—— 对使用者是「支持范围变宽」，插件审批行为无变化。
 

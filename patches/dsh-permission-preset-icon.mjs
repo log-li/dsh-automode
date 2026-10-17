@@ -39,7 +39,9 @@
  *   host edit's output text (`...spec.icon !== void 0 ? { icon: spec.icon } : {}`)
  *   is ordinary DSH code, so a DSH release that grows native support produces
  *   exactly the bytes this script writes. Credit is therefore settled by the
- *   backup sidecar this script writes *before* it edits a file: a host file that
+ *   backup sidecar this script writes *before* it edits a file (compared as
+ *   UTF-8 text — every artifact here is UTF-8, so this is byte equality in
+ *   practice): a host file that
  *   carries the passthrough **and** has a `.pre-dsh-automode-icon.bak` whose text
  *   this script's edits turn back into the current bytes was patched here
  *   (`already patched`); one that carries the passthrough **without** such proof

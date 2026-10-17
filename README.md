@@ -287,7 +287,7 @@ src/
 
 **Supported dsh versions: `0.1.0-rc.6` – `0.2.x`** (peer range `>=0.1.0-rc.6 <0.3.0-0`); the current 0.2 line is tested on `0.2.1-rc.2`. Two caveats worth stating plainly:
 
-- The peer range covers `0.2.x` **release** versions. npm's prerelease rule keeps every prerelease host — including the tested `0.2.1-rc.2` — outside a range whose comparators carry the `0.1.0-rc.6` preid; the previous `<0.2.0` bound behaved the same way for `0.1.7-rc.2`. Installing through a profile (`dsh plugin add` / `link:`) does not evaluate peer ranges, so prerelease hosts work in practice.
+- The peer range covers `0.2.x` **release** versions. npm's prerelease rule keeps every prerelease host — including the tested `0.2.1-rc.2` — outside a range whose comparators carry the `0.1.0-rc.6` preid; the previous `<0.2.0` bound behaved the same way for `0.1.7-rc.2`. `dsh plugin add` runs pnpm, which **does** evaluate the range and prints an unmet-peer warning on such a host but still installs; an npm-style install against a prerelease host fails with `ERESOLVE`.
 - `npm run typecheck` compiles against this repo's dev dependency (`@deepseek-ai/dsh-*` 0.1.0-rc.8), not against the host you run. Pointed at `0.2.1-rc.2`'s `.d.ts`, tsc reports type drift in the v3 compatibility branch (its `ContentBlockMap` no longer has `tool-result`) and in the `agent/created` handler's return type. Both are compile-time only: the branch is unreachable on 0.2.x and the handler returns `undefined`, which the new mode accepts. Runtime behaviour is unaffected.
 
 Permission facts (preset / sandbox / approval) are read through two auto-detected paths:
