@@ -270,15 +270,49 @@ src/
 
 ## 已知问题 / 待办
 
-- **★ 重定向写目标不进信任证明（2026-10-18 活体验收暴出，方向 fail-open）**：`bashWriteDestinations()` **不提取 `>` / `>>` 的重定向目标**。离线实测：`printf 'hello' > /tmp/x/out.txt`、`echo hi >> /tmp/x/log.txt`、`echo hi > ~/outside-allowlist.sh`、`cat >> /etc/hosts` 一律返回 `[]`（而 `mkdir -p /tmp/x` → `["/tmp/x"]`、`cp a b` → `[b]` 正常）。
-  - **后果**：这类写操作拿不到「目标在信任根内」的证明，于是**不走 allowPath 信任分支**（本次活体验收就是 `pre-execute-bashop esc=true bashDests=[]` + 单 token 快路径放行），只剩分类器一层兜着；同时 deny 频带对目标路径的扫描也看不到它。
-  - **当前边界**：DSH 文件沙箱仍拦工作区外写入（会触发审批 → 答复器复核），所以本次无害；但**「确定性信任证明」对重定向写是缺的**，属结构性缺口。
-  - **处置**：不在 v0.17.0 修（本版前提是 `src/` 零改动）。待办：给 `bashWriteDestinations()` 支持重定向目标（含 `2>`、`&>`、`<<<` 等变体与引号/变量未解析时 fail-closed），并补红绿用例；优先级按「确定性层应覆盖所有写形态」排。
-- **`0.2.x` 类型面未纳入 `npm run typecheck`（2026-10-17 复核，独立 review 提出并已复现）**：仓库 devDependency 是 `@deepseek-ai/dsh-*@0.1.0-rc.8`，所以 `npm run typecheck` 永远只验 0.1 线的 `.d.ts`。把 `src` + `tsconfig` 复制到临时树、`@deepseek-ai/*` 指向 `0.2.1-rc.2` 后跑同一个 tsc → **12 条类型错误**：
-  - `src/classifier.ts`：0.2.1 的 `ContentBlockMap` 已无 `'tool-result'`（union 只有 `text/reasoning/image/file/tool-call/tool-addition/tool-removal`），而 v3 兼容分支仍按该块取值 → 死分支 + 类型不重叠。
-  - `src/index.ts:507`：`agent/created` 在 0.2.1 从 `@mode emit` 改为 `@mode serial`，监听器返回类型由 `void` 变为 `undefined | Promise<undefined>`。
-  - **运行时不受影响**（类型擦除；v3 分支在 0.2.x 不可达；返回 `undefined` 合规），但**「在 0.2.1 上通过类型检查」这句话是错的，不要再写**。修法二选一：① 给 `ContentBlockMap` 做模块增强或本地窄类型、监听器显式 `return undefined`；② 保持现状并在文档里如实标注。本版取 ②（`src/` 零改动是本次发布的前提），修法 ① 记为待办。
-- **`icon` 补丁的 `natively supported` 分支只有合成 fixture 覆盖**：本机没有「宿主真的自带透传」的活体目标（`0.2.1-rc.2` 两半都仍需补丁）。另有一处方向安全的误判：本方补丁 + 任何外来字节改动会让「sidecar 复现」失败 → 判 `natively supported`（不写文件，但措辞会让人以为宿主自带）。已知，暂不细分「无 sidecar」与「sidecar 复现不出」。
+> 本节是 v0.17.0 收尾时的**完整残余清单**：v0.17.0 只做「声明与事实对齐」且坚持 `src/` 零改动，以下问题全部**未修**，逐条给出「症状 → 判据 → 影响 → 修法 → 优先级」。下面各行都是本轮实测或复核结论，不含推测。
+
+### A. 代码缺口（会影响判定正确性，按优先级）
+
+1. **★ 重定向写目标不进信任证明（fail-open 方向；优先级 P0）**
+   - **症状**：`bashWriteDestinations()` **不提取 `>` / `>>` 的目标**。离线实测：`printf 'hello' > /tmp/x/out.txt`、`echo hi >> /tmp/x/log.txt`、`echo hi > ~/outside-allowlist.sh`、`cat >> /etc/hosts` 一律返回 `[]`；对照：`mkdir -p /tmp/x` → `["/tmp/x"]`、`cp a b` → `["/tmp/b"]`。
+   - **后果**：这类写拿不到「目标在信任根内」的证明 → **不走 allowPath 信任分支**，只剩分类器（活体验收就是 `pre-execute-bashop esc=true bashDests=[]` + `one-token filter: routine/safe action` 放行）；同时 deny 频带的目标路径扫描也看不到它。
+   - **当前兜底**：DSH 文件沙箱仍拦工作区外写入（触发审批 → 答复器复核），所以不是「无审查」，但确定性层缺了证明。
+   - **修法**：`bashWriteDestinations()` 支持重定向目标（含 `2>`、`&>`、`>>`、`<<<` 等变体；目标含未解析 `$`/引号不完整时 **fail-closed**，不给信任证明）；补红绿用例（`> ~/x.sh` 必须拿不到信任证明）。
+   - **意义**：确定性层应覆盖所有写形态，而不是让快路径兜底。
+2. **`0.2.x` 类型面未纳入 `npm run typecheck`（优先级 P1）**
+   - **症状**：仓库 devDependency 是 `@deepseek-ai/dsh-*@0.1.0-rc.8`，`npm run typecheck` 永远只验 0.1 线。把 `src` + `tsconfig` 复制到临时树、`@deepseek-ai/*` 指向 `0.2.1-rc.2` 后跑同一个 tsc → **12 条类型错误**：
+     - `src/classifier.ts`：0.2.1 的 `ContentBlockMap` 已无 `'tool-result'`（union = `text/reasoning/image/file/tool-call/tool-addition/tool-removal`），v3 兼容分支仍按该块取值 → 死分支 + 类型不重叠（11 条）。
+     - `src/index.ts:507`：`agent/created` 在 0.2.1 由 `@mode emit` 改为 `@mode serial`，监听器返回类型 `void` → `undefined | Promise<undefined>`（1 条）。
+   - **影响**：**运行时不受影响**（类型擦除；v3 分支在 0.2.x 不可达；返回 `undefined` 合规），但「通过类型检查」这句话不能说。
+   - **修法**：给 `ContentBlockMap` 做模块增强或本地窄类型 + 监听器显式 `return undefined`；或加一条 opt-in 的 `test:types-0.2`（需本机有 0.2.x 安装）。
+   - **判据（防复发）**：凡声称「在某宿主版本通过类型检查」，先确认 `node_modules` 里装的就是那个版本。
+
+### B. `icon` 补丁（`patches/`，不影响审批行为）
+
+3. **半原生宿主被静默判 `natively supported`（优先级 P2）**
+   - **症状**：宿主若「有 `optionOf()` 透传、无 schema `icon` 字段」（用真实 0.2.1 前像字节构造 fixture 实测过），脚本报 `natively supported`、exit 0，**schema 永远不会被补**。
+   - **影响被压低**：schemastery 的 `z.object` 不剥离未声明键（实测 `icon` 原样保留），所以 `optionOf` 仍拿得到 icon，丢的只是 schema 校验与类型。
+   - **修法**：native 分支顺带核一次 schema 锚点；半原生时给一条明确提示，而不是干净地说「native」。
+4. **`natively supported` 无活体目标 + 反向误归属（优先级 P3）**
+   - 本机没有「宿主真自带透传」的安装，该分支只有合成 fixture + 「真机字节去 sidecar」覆盖。
+   - 反向误归属：本方补丁 + 任何外来字节改动会让「sidecar 复现」失败 → 判 `natively supported`（**不写文件**，方向安全，但措辞会让人以为宿主自带）。暂不细分「无 sidecar」与「sidecar 复现不出」。
+5. **归属判据是 UTF-8 文本比较，不是字节比较（轻微，可不修）**
+   - `readFileSync(…, 'utf8')`。本仓产物均为 UTF-8，实践中等价；头注释已注明「compared as UTF-8 text」。要严格字节级需改成 Buffer 读写，动静大于收益。
+
+### C. 测试债（轻微，已评估为不承重）
+
+6. **`patch-icon.test.mjs` 的归属路径缺 count≥2 用例**：把 `applyEdits` 的 `countOf !== expect` 弱化为 `=== 0` 后 31/31 仍全绿（跨家族 review 变异实测）。**不修理由**：即便计数检查放行，后续还要求「重放结果逐字节等于当前文件」；两条路径误判的后果都只是 `already` / `native` 的**措辞**，两个分支都不写文件；写路径的 all-or-nothing 由 `missing` 循环独立承重（删掉该逻辑测试立刻红）。
+7. **一条只断言日志措辞的用例**（`Host half: natively supported` / `Client half: still needs this patch`）：字节由相邻用例覆盖，单独看属措辞断言。
+
+### D. 验证缺口（不是代码缺陷，但结论不能过誉）
+
+8. **A3（deny 层真回合拦下）未做活体验证**：原验收提示要驱动自主提权 + `rm -rf`，被本插件分类器两次拒绝并触发熔断（拒绝是对的）。改为零副作用探针后**只做离线命中验证**（`mv /etc/<不存在路径>` 命中 deny 正则、`rm -rf /tmp/<不存在目录>` 命中删除守卫）。历史 0.1.7 轮次有活体记录。
+9. **A4 未触达 allowPath 专路**：真回合里闸门 + 答复器 + 文件写出成立，但放行理由是 `one-token filter` 快路径，`curated allowPath` → `approval-bridge auto-allowed` 这条**专门通路本轮未被触达**；且同一次调用暴露了上面 A1 的重定向缺口。
+10. **B 类三项**（熔断跳闸注入 / 另一条权限探测分支 / 非 auto-mode 不干预）仍按既有结构断言替代，本轮未触达。
+
+### E. 既往条目（已修复，保留作回归背景）
+
 
 - **★ `ask_user_question` 的答复在 `dsh ≥ 0.1.7-rc.2` 上不再进入分类器意图窗口 → 用户经由该工具给出的授权对闸门不可见**（2026-09-28 实测复现，**v0.16.1 已修复**；与 issue #3 同族：都是 session format v4 换形后插件仍在读 v3 信封）
   - **症状**：用户在 `ask_user_question` 里明确选了「确认执行」（答复原话记入会话），随后的提权 bash 仍被 `pre-execute-deny` 拒，理由为 **「The user only asked why OpenClaw is stuck; they did not authorize …」** —— 分类器看到的是**更早那条原始提问**，看不到刚发生的确认；连续两次同样被拒（改过措辞、改过命令，均拒）。
