@@ -628,6 +628,8 @@ const COMMAND_WRAPPERS = new Set([
   'sudo', 'doas', 'env', 'command', 'nohup', 'time', 'exec', 'builtin', 'nice', 'stdbuf', 'xargs',
   // v0.18.0 review: these all run the next word as a command.
   'eval', 'busybox', 'chroot', 'fakeroot', 'ionice', 'su', 'runuser', 'sg',
+  // release review: exec-runners that take a duration/flag then the command.
+  'timeout', 'setsid', 'strace', 'ltrace', 'watch', 'chrt', 'taskset', 'unbuffer', 'chronic',
 ]);
 
 /** Interpreters whose `-c` / `-Command` / `/c` payload is itself a command. */
@@ -635,6 +637,8 @@ const INTERPRETER_WRAPPERS = new Set([
   'sh', 'bash', 'zsh', 'fish', 'ksh', 'csh', 'tcsh', 'dash', 'pwsh', 'powershell', 'cmd', 'node', 'python', 'python3', 'perl', 'ruby',
   // `su -c "<command>"` / `runuser -c "<command>"` run a shell payload too.
   'su', 'runuser',
+  // `npx -c "<command>"` runs a shell.
+  'npx',
 ]);
 
 /**
@@ -645,7 +649,20 @@ const INTERPRETER_WRAPPERS = new Set([
  */
 const VALUE_TAKING_WRAPPERS = new Set([
   'sudo', 'doas', 'su', 'runuser', 'sg', 'chroot', 'fakeroot', 'ionice', 'nice', 'time', 'stdbuf',
+  // release review: `env -u PATH rm …`, `timeout 5 rm …`, `watch -n 2 rm …`.
+  'env', 'timeout', 'watch', 'taskset', 'chrt',
 ]);
+
+/**
+ * Options that consume a VALUE, per wrapper. `xargs -I {} rm -rf {}` and
+ * `xargs -n 1 rm` were silent bypasses until this table existed; the value is
+ * dropped and the peel continues at the real command. `xargs echo rm -rf`
+ * still resolves to `echo`, because `echo` is not a value of a listed option.
+ */
+const WRAPPER_VALUED_OPTIONS: Record<string, ReadonlySet<string>> = {
+  xargs: new Set(['-I', '--replace', '-L', '--max-lines', '-n', '--max-args', '-P', '--max-procs',
+    '-s', '--max-chars', '-d', '--delimiter', '-E', '--eof', '-a', '--arg-file', '-J']),
+};
 
 /** Wrappers whose next bare operand is a USER, not the command (`su - user -c …`). */
 const USER_TAKING_WRAPPERS = new Set(['su', 'runuser', 'sg']);
@@ -657,7 +674,7 @@ const USER_TAKING_WRAPPERS = new Set(['su', 'runuser', 'sg']);
  * are ordinary spellings, and an exact `-c`-only match leaves them as a
  * one-flag edit away from a bypass (v0.18.0 review, severe).
  */
-const PAYLOAD_FLAG = /(?:^|\s)(-[A-Za-z]*c[A-Za-z]*|-{2}command|\/c|\/k)(?:\s|$)/i;
+const PAYLOAD_FLAG = /(?:^|\s)(-[A-Za-z]*c[A-Za-z]*|-e|-{2}command|\/c|\/k)(?:\s|$)/i;
 
 /** Commands that only pass bytes through: a heredoc body fed to them is data, not a command. */
 const DATA_CONSUMERS = new Set([
@@ -726,8 +743,9 @@ function commandWordOf(word: string): string {
   w = w.replace(/^[(!{]+/, '');
   w = w.replace(/^\$\(/, '');
   w = w.replace(/^[\\`"']+/, '');
-  w = w.replace(/[)`"';&|*]+$/, '');
-  const withPath = w.split('/').pop() ?? w;
+  w = w.replace(/[)`"';&|*\\]+$/, '');
+  // Windows paths use `\`; normalize before taking the basename.
+  const withPath = w.replace(/\\/g, '/').split('/').pop() ?? w;
   // Windows executables arrive with an extension (`powershell.exe -Command …`).
   return withPath.replace(/\.(?:exe|cmd|bat|com)$/i, '').toLowerCase();
 }
@@ -781,6 +799,10 @@ function deletionInSegment(segment: string, depth: number): string | null {
   if (!segment || depth > 3) return null;
   let rest = segment.trim();
   while (rest.startsWith('(') || rest.startsWith('{')) rest = rest.slice(1).trim();
+  // Shell-level backslash escapes before a quote (`\"`) hide the quote
+  // structure; unescaping them first lets the quote layer be recognised.
+  // Fail-closed: unescaping can only reveal more, never fewer, commands.
+  rest = rest.replace(/\\(["'`])/g, '$1');
 
   // Command substitutions are executed wherever they appear.
   for (const body of substitutionBodies(rest)) {
@@ -806,9 +828,18 @@ function deletionInSegment(segment: string, depth: number): string | null {
       peeledWrapper = peeledName;
       continue;
     }
-    const flag = /^-{1,2}\S*\s+/.exec(rest);
+    const flag = /^(-{1,2}\S*)\s+/.exec(rest);
     if (flag) {
+      const flagName = flag[1] ?? '';
       rest = rest.slice(flag[0].length);
+      // A wrapper option that TAKES A VALUE consumes the next token too
+      // (`xargs -I {} rm …`, `xargs -n 1 rm …`, `xargs --arg-file f rm …`).
+      // Attached forms (`-I{}`, `--opt=v`) carry their value already.
+      const valued = WRAPPER_VALUED_OPTIONS[peeledWrapper];
+      if (valued && valued.has(flagName)) {
+        const value = /^(\S+)\s+/.exec(rest);
+        if (value && !(value[1] ?? '').startsWith('-')) rest = rest.slice(value[0].length);
+      }
       continue;
     }
     // A wrapper option VALUE (`sudo -u root rm …`, `su - user -c …`). Peeling is
@@ -833,15 +864,28 @@ function deletionInSegment(segment: string, depth: number): string | null {
     break;
   }
 
+  // Strip any number of WHOLE-SEGMENT quote layers WITHOUT charging the depth
+  // budget: `bash -c 'bash -c "rm -rf x"'` nests three quoting levels but is a
+  // single command chain, and depth must price real nesting (interpreter
+  // payloads, substitutions), not quotation (v0.18.0 release review).
+  for (let quotes = 0; quotes < 6; quotes++) {
+    const trimmed = rest.trim();
+    const first = trimmed[0] ?? '';
+    if ((first === '"' || first === "'" || first === '`') && trimmed.length > 1
+      && trimmed.endsWith(first)) {
+      rest = trimmed.slice(1, -1).trim();
+      continue;
+    }
+    break;
+  }
+
   const argv = tokenizeShell(rest);
   const rawHead = argv[0] ?? '';
   const head = commandWordOf(rawHead);
   if (!head) return null;
 
-  // A QUOTED payload collapses into a single token (`"rm -rf x"`), and so does
-  // the payload of `sh -c "…"`. Treat a whitespace-bearing command word as a
-  // nested command rather than as an unknown name.
-  if (/\s/.test(rawHead) && depth < 3) {
+  // A residual quoted payload that still carries whitespace is a nested command.
+  if (/\s/.test(rawHead)) {
     for (const nested of splitShellSegments(rawHead)) {
       const hit = deletionInSegment(nested, depth + 1);
       if (hit) return hit;
@@ -869,7 +913,8 @@ function deletionInSegment(segment: string, depth: number): string | null {
 
   if (head === 'git') {
     const sub = argv[1] ? commandWordOf(argv[1]) : '';
-    if (sub === 'rm') return 'git rm';
+    // `git rm --cached` only untracks; the file stays on disk (recoverable).
+    if (sub === 'rm') return argv.includes('--cached') ? null : 'git rm';
     if (sub === 'clean' && argv.slice(2).some((t) => /^--?[a-z]*f[a-z]*$/i.test(t))) return 'git clean';
     return null;
   }

@@ -10,7 +10,7 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [0.18.0] — 2026-11-04
 
 ### Added
-- **Permanent-deletion commands are rejected outright.** In auto mode, `rm`, `unlink`, `shred`, `git rm`, `git clean -f…`, `find … -delete`, `rsync --delete*`, `del` / `rd /s` / `Remove-Item -Recurse` — including the same commands behind `sudo` / `env` / `xargs` / `eval` / `busybox` / `su -c`, a shell payload (`sh -c`, `bash -lc`, `find -exec`), a `$( … )` / backtick substitution, or a path prefix — are hard-rejected before they run, and the rejection tells the agent to use `trash`. This covers commands that stay inside the workspace, so an in-workspace `rm -rf` is no longer silent and unrecorded.
+- **Permanent-deletion commands are rejected outright.** In auto mode, `rm`, `unlink`, `shred`, `git rm`, `git clean -f…`, `find … -delete`, `rsync --delete*`, `del` / `rd /s` / `Remove-Item` — including the same commands behind a wrapper (`sudo`, `env -u …`, `xargs -I {} …`, `timeout 5 …`, `nohup`, `eval`, `busybox`, `su -c`), a shell payload (`sh -c`, `bash -lc`, `find -exec`, `npx -c`), a `$( … )` / backtick substitution, a heredoc piped into a shell, any number of quote layers, or a Windows path prefix — are hard-rejected before they run, and the rejection tells the agent to use `trash`. This covers commands that stay inside the workspace, so an in-workspace `rm -rf` is no longer silent and unrecorded.
 - **Sessions that inherit auto mode are now guarded.** A subagent or AgentTeams worker created from an auto-mode session used to run entirely unguarded: its own permission preset is unset, so the gate treated it as "not auto mode" and did nothing. The gate now walks the parent-session chain and applies the deterministic rules (deny band, deletion guard, allow band, path trust) to those sessions as well. They do not reach the classifier — there is no approval answerer behind a child session.
 
 ### Changed
@@ -158,7 +158,7 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [0.18.0] — 2026-11-04
 
 ### 新增
-- **永久删除命令现在直接拒绝。** auto mode 下，`rm`、`unlink`、`shred`、`git rm`、`git clean -f…`、`find … -delete`、`rsync --delete*`、`del` / `rd /s` / `Remove-Item -Recurse`，以及把它们藏在 `sudo` / `env` / `xargs` / `eval` / `busybox` / `su -c`、shell 载荷（`sh -c`、`bash -lc`、`find -exec`）、`$( … )` / 反引号替换或路径前缀后面的写法，都会在执行前被硬拒，拒绝理由让 agent 改用 `trash`。发生在工作区内的命令同样适用，所以工作区里的 `rm -rf` 不再静默执行、也不再有记录缺口。
+- **永久删除命令现在直接拒绝。** auto mode 下，`rm`、`unlink`、`shred`、`git rm`、`git clean -f…`、`find … -delete`、`rsync --delete*`、`del` / `rd /s` / `Remove-Item`，以及把它们藏在包装词（`sudo`、`env -u …`、`xargs -I {} …`、`timeout 5 …`、`nohup`、`eval`、`busybox`、`su -c`）、shell 载荷（`sh -c`、`bash -lc`、`find -exec`、`npx -c`）、`$( … )` / 反引号替换、管道送进 shell 的 heredoc、任意层数引号或 Windows 路径前缀后面的写法，都会在执行前被硬拒，拒绝理由让 agent 改用 `trash`。发生在工作区内的命令同样适用，所以工作区里的 `rm -rf` 不再静默执行、也不再有记录缺口。
 - **继承 auto mode 的会话也纳入管辖。** 由 auto-mode 会话派生的子代理或 AgentTeams worker 此前完全不设防：它自己的权限预设是空的，闸门据此判定「不是 auto mode」而直接放行。现在闸门会沿父会话链上溯，对这些会话同样执行确定性规则（deny 频带、删除守卫、allow 频带、路径信任）。它们不进分类器——子会话身后没有审批答复器。
 
 ### 变更

@@ -114,7 +114,7 @@ node patches/dsh-permission-preset-icon.mjs
 
 pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来不会触发 approval 瀑布的那些）。approval 瀑布只对真正需要沙箱升级的调用运行。pre-execute 门**仅对 auto-mode 会话生效**；在其他 preset（read-only / workspace-write / danger-full-access）下它是 no-op，不会与你所选沙箱冲突。自 0.18.0 起，门也覆盖**继承 auto mode 的会话**：子代理或 AgentTeams worker 自己的 preset 为空时，只要沿 `parentSession` 链找到一层 auto-mode 祖先，该会话即受管辖。这类会话只跑确定性层——它们身后没有审批答复器，分类器不会被调用——被覆盖的第一次调用会在审计日志写一条 `pre-execute-inherited`。
 
-**永久删除是「直接拒绝」，不是「交给人审」。** `rm`、`unlink`、`shred`、`git rm`、`git clean -f…`、`find … -delete`、`rsync --delete*`、`del`/`rd /s`/`Remove-Item -Recurse`，以及把它们藏在 `sudo`/`env`/`xargs`/`sh -c` 或路径前缀后面的写法，都会在执行前被硬拒，拒绝理由让模型改用 `trash`（可恢复，仍在 allow 频带内）。这是确定性频带，所以即使命令发生在工作区内、根本不涉及审批，也照样拦下。两点后果值得知道：`rm -rf node_modules` 同样被拒（改用 `trash`）；守卫只看**会被执行**的文本——`sh -c`、`bash -lc`、`eval`、`busybox`、`su -c`、`find -exec` 以及 `$( … )` / 反引号替换都会被跟进，而把删除命令当普通参数引用（`echo "rm -rf x"`、`git commit -m "drop rm -rf"`）不算动作。
+**永久删除是「直接拒绝」，不是「交给人审」。** `rm`、`unlink`、`shred`、`git rm`、`git clean -f…`、`find … -delete`、`rsync --delete*`、`del`/`rd /s`/`Remove-Item`，以及把它们藏在包装词（`sudo`、`env -u …`、`xargs -I {} …`、`timeout 5 …`、`nohup`、`eval`、`busybox`、`su -c …`）、shell 载荷（`sh -c`、`bash -lc`、`find -exec sh -c`、`npx -c`）、`$( … )`/反引号替换或 Windows 路径前缀后面的写法，都会在执行前被硬拒，拒绝理由让模型改用 `trash`（可恢复，仍在 allow 频带内）。这是确定性频带，所以即使命令发生在工作区内、根本不涉及审批，也照样拦下。两点后果值得知道：`rm -rf node_modules` 同样被拒（改用 `trash`）；守卫只看**会被执行**的文本——`sh -c`、`bash -lc`、`eval`、`busybox`、`su -c`、`find -exec`、`npx -c`、`$( … )` / 反引号替换、以及管道送进 shell 的 heredoc（`cat <<EOF | sh`）都会被跟进，无论套了几层引号；而把删除命令当普通参数引用（`echo "rm -rf x"`、`git commit -m "drop rm -rf"`）不算动作。`git rm --cached` 放行：它只是取消跟踪，文件仍在盘上。
 
 ## 规则
 

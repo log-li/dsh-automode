@@ -1406,6 +1406,22 @@ test('the deletion guard catches rm through wrappers, path prefixes and nested s
     'find . -exec sh -c "rm -rf {}" \\;',
     'powershell.exe -Command Remove-Item x',
     'rm.exe -rf x',
+    // v0.18.0 release review: xargs/env option values, deep quote nesting,
+    // exec-runners, Windows paths, and `-e` one-liners.
+    'cat /tmp/list | xargs -I {} rm -rf {}',
+    'echo f | xargs -n 1 rm',
+    'echo f | xargs -P 4 rm',
+    'echo f | xargs --arg-file f rm',
+    'bash -c \'bash -c "rm -rf x"\'',
+    'bash -c \'bash -c "bash -c \\\"rm -rf x\\\""\'',
+    'env -u PATH rm -rf x',
+    'timeout 5 rm -rf x',
+    'setsid rm -rf x',
+    'strace -f rm -rf x',
+    'watch -n 2 rm -rf x',
+    'npx -c "rm -rf x"',
+    'c:\\windows\\system32\\cmd.exe /c del x',
+    'perl -e "unlink q(f)"',
     // A data consumer's heredoc is only "data" when nothing downstream EXECUTES it.
     'cat <<EOF | sh\nrm -rf x\nEOF',
     'cat <<EOF | bash -s\nrm -rf x\nEOF',
@@ -1433,6 +1449,9 @@ test('the deletion guard stays quiet on recoverable deletes, mentions and data h
     'git log --grep="rm -rf"',
     // Downstream is another DATA consumer (the body is only filtered), so it stays data.
     'cat <<EOF | grep rm\nrm -rf x\nEOF',
+    // `git rm --cached` / `-r --cached` only UNTRACK; the file stays on disk.
+    'git rm --cached f.txt',
+    'git rm --cached -r dir',
   ];
   // `xargs` hands the NEXT word to itself, so `echo` is its command, not a
   // value: this must stay allowed (it was a false positive before the review fix).
