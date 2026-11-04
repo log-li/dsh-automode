@@ -1422,6 +1422,18 @@ test('the deletion guard catches rm through wrappers, path prefixes and nested s
     'npx -c "rm -rf x"',
     'c:\\windows\\system32\\cmd.exe /c del x',
     'perl -e "unlink q(f)"',
+    // round 3 of the release review: repeated wrapper options, BSD xargs flags,
+    // parenthesised API callees, text piped into a shell, deep nesting.
+    'env -u A -u B rm -rf x',
+    'env -u A -- rm -rf x',
+    'xargs -I {} -R 3 rm -rf {}',
+    'xargs -N 1 rm',
+    "perl -e 'unlink(q(f))'",
+    'php -r "unlink(\'f\');"',
+    'echo rm -rf x | sh',
+    'echo "rm -rf x" | sh',
+    'printf \'rm -rf x\' | bash',
+    'timeout -k 5 5 rm -rf x',
     // A data consumer's heredoc is only "data" when nothing downstream EXECUTES it.
     'cat <<EOF | sh\nrm -rf x\nEOF',
     'cat <<EOF | bash -s\nrm -rf x\nEOF',
@@ -1449,6 +1461,8 @@ test('the deletion guard stays quiet on recoverable deletes, mentions and data h
     'git log --grep="rm -rf"',
     // Downstream is another DATA consumer (the body is only filtered), so it stays data.
     'cat <<EOF | grep rm\nrm -rf x\nEOF',
+    'echo hi | grep rm',
+    'env -u X ls',
     // `git rm --cached` / `-r --cached` only UNTRACK; the file stays on disk.
     'git rm --cached f.txt',
     'git rm --cached -r dir',

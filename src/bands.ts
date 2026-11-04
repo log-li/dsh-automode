@@ -634,7 +634,7 @@ const COMMAND_WRAPPERS = new Set([
 
 /** Interpreters whose `-c` / `-Command` / `/c` payload is itself a command. */
 const INTERPRETER_WRAPPERS = new Set([
-  'sh', 'bash', 'zsh', 'fish', 'ksh', 'csh', 'tcsh', 'dash', 'pwsh', 'powershell', 'cmd', 'node', 'python', 'python3', 'perl', 'ruby',
+  'sh', 'bash', 'zsh', 'fish', 'ksh', 'csh', 'tcsh', 'dash', 'pwsh', 'powershell', 'cmd', 'node', 'python', 'python3', 'perl', 'ruby', 'php',
   // `su -c "<command>"` / `runuser -c "<command>"` run a shell payload too.
   'su', 'runuser',
   // `npx -c "<command>"` runs a shell.
@@ -661,7 +661,10 @@ const VALUE_TAKING_WRAPPERS = new Set([
  */
 const WRAPPER_VALUED_OPTIONS: Record<string, ReadonlySet<string>> = {
   xargs: new Set(['-I', '--replace', '-L', '--max-lines', '-n', '--max-args', '-P', '--max-procs',
-    '-s', '--max-chars', '-d', '--delimiter', '-E', '--eof', '-a', '--arg-file', '-J']),
+    '-s', '--max-chars', '-d', '--delimiter', '-E', '--eof', '-a', '--arg-file', '-J',
+    // BSD/macOS spellings (`xargs -I {} -R 3 rm …`).
+    '-R', '-N']),
+  timeout: new Set(['-k', '--kill-after', '-s', '--signal']),
 };
 
 /** Wrappers whose next bare operand is a USER, not the command (`su - user -c …`). */
@@ -674,7 +677,7 @@ const USER_TAKING_WRAPPERS = new Set(['su', 'runuser', 'sg']);
  * are ordinary spellings, and an exact `-c`-only match leaves them as a
  * one-flag edit away from a bypass (v0.18.0 review, severe).
  */
-const PAYLOAD_FLAG = /(?:^|\s)(-[A-Za-z]*c[A-Za-z]*|-e|-{2}command|\/c|\/k)(?:\s|$)/i;
+const PAYLOAD_FLAG = /(?:^|\s)(-[A-Za-z]*c[A-Za-z]*|-e|-r|-{2}command|\/c|\/k)(?:\s|$)/i;
 
 /** Commands that only pass bytes through: a heredoc body fed to them is data, not a command. */
 const DATA_CONSUMERS = new Set([
@@ -744,8 +747,10 @@ function commandWordOf(word: string): string {
   w = w.replace(/^\$\(/, '');
   w = w.replace(/^[\\`"']+/, '');
   w = w.replace(/[)`"';&|*\\]+$/, '');
+  // A call form (`unlink(f)`, `unlink(q(f))`) reduces to the callee name.
+  const callee = w.split('(')[0] ?? w;
   // Windows paths use `\`; normalize before taking the basename.
-  const withPath = w.replace(/\\/g, '/').split('/').pop() ?? w;
+  const withPath = callee.replace(/\\/g, '/').split('/').pop() ?? callee;
   // Windows executables arrive with an extension (`powershell.exe -Command …`).
   return withPath.replace(/\.(?:exe|cmd|bat|com)$/i, '').toLowerCase();
 }
@@ -796,7 +801,7 @@ function substitutionBodies(text: string): string[] {
  * @returns the matched command word, or `null`.
  */
 function deletionInSegment(segment: string, depth: number): string | null {
-  if (!segment || depth > 3) return null;
+  if (!segment || depth > 8) return null;
   let rest = segment.trim();
   while (rest.startsWith('(') || rest.startsWith('{')) rest = rest.slice(1).trim();
   // Shell-level backslash escapes before a quote (`\"`) hide the quote
@@ -856,8 +861,16 @@ function deletionInSegment(segment: string, depth: number): string | null {
       rest = rest.slice((value[1] ?? '').length).trimStart();
       continue;
     }
+    const nextIsFlag = (value?.[2] ?? '').startsWith('-');
     if (isOperand && VALUE_TAKING_WRAPPERS.has(peeledWrapper)
-      && (DELETION_COMMANDS.has(after) || COMMAND_WRAPPERS.has(after) || INTERPRETER_WRAPPERS.has(after))) {
+      && (nextIsFlag || DELETION_COMMANDS.has(after) || COMMAND_WRAPPERS.has(after) || INTERPRETER_WRAPPERS.has(after))) {
+      // `env -u A -u B rm …` (another option follows) and `timeout 5 rm …`.
+      rest = rest.slice((value[1] ?? '').length).trimStart();
+      continue;
+    }
+    // Duration/count operands of timing wrappers (`timeout -k 5 5 rm …`).
+    if (value && ['timeout', 'watch', 'nice', 'ionice', 'taskset', 'chrt'].includes(peeledWrapper)
+      && /^\d+(?:\.\d+)?[smhd]?$/.test(value[1] ?? '')) {
       rest = rest.slice((value[1] ?? '').length).trimStart();
       continue;
     }
@@ -944,9 +957,23 @@ function deletionInSegment(segment: string, depth: number): string | null {
 export function matchDeletion(commandText: string): string | null {
   if (!commandText) return null;
   const text = stripDataHeredocBodies(commandText);
-  for (const segment of splitShellSegments(text)) {
+  const segments = splitShellSegments(text);
+  for (const segment of segments) {
     const hit = deletionInSegment(segment, 0);
     if (hit) return `permanent deletion command detected (${hit})`;
+  }
+  // Text piped INTO an interpreter is executed by it (`echo rm -rf x | sh`).
+  const feedsShell = segments.some((segment) => {
+    const head = commandWordOf(segment.trim().match(/\S+/)?.[0] ?? '');
+    return INTERPRETER_WRAPPERS.has(head);
+  });
+  if (feedsShell) {
+    for (const segment of segments) {
+      for (const token of tokenizeShell(segment)) {
+        const hit = deletionInSegment(token, 0);
+        if (hit) return `permanent deletion command detected (${hit} piped to a shell)`;
+      }
+    }
   }
   return null;
 }
