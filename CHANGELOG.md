@@ -7,6 +7,9 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ### Changed
 - (track upcoming changes here; moved into a dated version section at release time — Keep a Changelog)
 
+### Thanks
+- @kuhaku9527 for the report and root-cause analysis behind 0.18.0's deletion guard ([issue #4](https://github.com/log-li/dsh-automode/issues/4)).
+
 ## [0.18.0] — 2026-11-04
 
 ### Added
@@ -157,6 +160,9 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [Unreleased]
 
 （发布前在此跟踪变更；发布时移入带日期的版本段——Keep a Changelog）
+
+### 致谢
+- @kuhaku9527：0.18.0 删除守卫所依据的报告与根因分析（[issue #4](https://github.com/log-li/dsh-automode/issues/4)）。
 
 ## [0.18.0] — 2026-11-04
 
