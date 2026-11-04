@@ -1406,6 +1406,10 @@ test('the deletion guard catches rm through wrappers, path prefixes and nested s
     'find . -exec sh -c "rm -rf {}" \\;',
     'powershell.exe -Command Remove-Item x',
     'rm.exe -rf x',
+    // A data consumer's heredoc is only "data" when nothing downstream EXECUTES it.
+    'cat <<EOF | sh\nrm -rf x\nEOF',
+    'cat <<EOF | bash -s\nrm -rf x\nEOF',
+    'cat <<EOF | xargs rm\nfoo\nEOF',
   ];
   for (const command of hits) {
     assert.notEqual(matchDeletion(command), null, `must be caught: ${JSON.stringify(command)}`);
@@ -1427,6 +1431,8 @@ test('the deletion guard stays quiet on recoverable deletes, mentions and data h
     'cat > notes.md <<EOF\nrm -rf old-build\nEOF',
     'export E=1; cat <<EOF\nrm -rf old-build\nEOF',
     'git log --grep="rm -rf"',
+    // Downstream is another DATA consumer (the body is only filtered), so it stays data.
+    'cat <<EOF | grep rm\nrm -rf x\nEOF',
   ];
   // `xargs` hands the NEXT word to itself, so `echo` is its command, not a
   // value: this must stay allowed (it was a false positive before the review fix).

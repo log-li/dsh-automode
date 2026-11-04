@@ -699,6 +699,18 @@ function stripDataHeredocBodies(cmd: string): string {
     // Only a pure data consumer's body is dropped. A shell/interpreter heredoc
     // (`bash <<EOF … EOF`) EXECUTES its body, so those lines stay in the scan.
     if (!DATA_CONSUMERS.has(head)) break;
+    // ...and only when the pipeline DOWNSTREAM of that consumer is data too:
+    // `cat <<EOF | sh` hands the body to a shell, which executes it. Every later
+    // stage on the same line must be a data consumer, otherwise keep scanning
+    // (fail-closed). (v0.18.0 release review)
+    const lineEnd = cmd.indexOf('\n', match.index);
+    const lineRest = cmd.slice(match.index, lineEnd < 0 ? cmd.length : lineEnd);
+    const downstream = splitShellSegments(lineRest).slice(1);
+    const downstreamExecutes = downstream.some((seg) => {
+      const stage = commandWordOf(seg.trim().match(/\S+/)?.[0] ?? '');
+      return stage !== '' && !DATA_CONSUMERS.has(stage);
+    });
+    if (downstreamExecutes) break;
     // Data consumer → drop the body, keep the terminating delimiter line.
     const dropEnd = bodyStart + close.index + close[0].length;
     out += cmd.slice(lastIndex, bodyStart);
