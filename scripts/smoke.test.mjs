@@ -1599,6 +1599,17 @@ test('an inherited session stops at the deterministic layers (no classifier, one
   }
 });
 
+console.log('release SOP (issue closure is part of "done")');
+test('the release SOP keeps the mandatory issue-closure step (AGENTS.md + spec)', () => {
+  const agents = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8');
+  const spec = readFileSync(new URL('../.plans/spec/dsh-automode-spec.md', import.meta.url), 'utf8');
+  for (const [label, text] of [['AGENTS.md', agents], ['spec', spec]]) {
+    assert.match(text, /issue 闭环/, `${label} must keep the issue-closure step`);
+    assert.match(text, /gh issue close/, `${label} must say HOW to close it`);
+    assert.match(text, /Fixes #/, `${label} must record that Refs does not close an issue`);
+  }
+});
+
 console.log('privacy gate (a leak that enters history can never be taken back)');
 import { scan as scanPrivacy, targetFiles as privacyTargetFiles } from './privacy-check.mjs';
 test('the gate flags this machine’s paths, plain usernames and the hostname', () => {

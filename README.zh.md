@@ -268,6 +268,7 @@ node scripts/audit.mjs --fail-on-pairs --limit 500  # 存在矛盾对即 exit 1�
 |---|---|
 | @WSL043 | 💻 权限兼容层 namespace-probe 思路（[PR #2](https://github.com/log-li/dsh-automode/pull/2)，共同署名） |
 | @xiaolinziwang | 🐛 bug 报告（[issue #1](https://github.com/log-li/dsh-automode/issues/1)） |
+| @kuhaku9527 | 🐛 bug 报告 + 根因分析（[issue #4](https://github.com/log-li/dsh-automode/issues/4)） |
 
 当 auto 模式激活时，插件会"影子化"审批策略的系统提示，让模型看到 "auto" 而不是 "ask"。这告诉模型：工具拒绝来自自动化审查者，而非人类。模型会相应调整重试策略（尝试更小/更安全动作，而不是问用户）。
 

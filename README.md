@@ -268,6 +268,7 @@ Thanks to everyone who contributed to @log.li/dsh-automode:
 |---|---|
 | @WSL043 | 💻 compat-layer namespace-probe technique ([PR #2](https://github.com/log-li/dsh-automode/pull/2), co-author) |
 | @xiaolinziwang | 🐛 bug reports ([issue #1](https://github.com/log-li/dsh-automode/issues/1)) |
+| @kuhaku9527 | 🐛 bug report + root-cause analysis ([issue #4](https://github.com/log-li/dsh-automode/issues/4)) |
 
 When auto mode is active, the plugin shadows the approval-policy system prompt so the model sees "auto" instead of "ask". This tells the model that tool rejections come from the automated reviewer, not from a human. The model adjusts its retry strategy accordingly (try a smaller/safer action instead of asking the user).
 

@@ -112,3 +112,16 @@ git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z
 **因此质量门全在本机**：发布前置 = `npm run build` 后 `lib/` 入库 + `npm test`（smoke + 补丁自测）绿 +
 独立模型家族 review 完成 + CHANGELOG 两个半区定稿（去掉 `unreleased`）+ README/CHANGELOG 与实现逐段对齐。
 详见 spec §发布流程。
+
+### 发布后必做：issue 闭环（不是可选步骤）
+
+「发布完成」= 产物上线 **且** 对应 issue 已回复并关闭 **且** 贡献者已登记。缺任何一项都不算完成：
+
+1. **发布前**先列 open issue / PR（`gh issue list -R log-li/dsh-automode --state open`），确认本次改动对应哪一条；
+   对应 issue 的验收要点要能在 spec 的 E2E 证据表里找到落点。
+2. **回复**：在 issue 里回一份「确认成立 / 你验到的三条根因逐条核实 / 修了什么 / 证据 / 仍未覆盖的边界」，
+   用报告者的语言（通常是英文），**明确写出版本号**。
+3. **关闭**：`gh issue close <n> --reason completed`；或者最后一个 commit / tag 说明里写 `Fixes #<n>`（推默认分支即自动关闭）——
+   **只写 `Refs #<n>` 不会关闭**（v0.18.0 就是这样漏掉的）。
+4. **贡献者**：bug 报告 / 根因分析 / PR 署名列进 README 中英两张 Contributors 表；CHANGELOG 的 Thanks 可点名。
+5. 宿主侧根因（不是本插件能修的）要在 issue 里说明归属，别让报告者以为是自己的配置问题。

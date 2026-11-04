@@ -636,7 +636,14 @@ scripts/e2e-isolated-home.sh reset                 # 清 sessions + 审计记录
 2. **Actions（`release.yml`）刻意不装依赖、不跑构建/测试**——本仓 peer 依赖宿主私有包（如 `dsh-sandbox-policy` 的 `0.1.x` 只存在于 DSH 宿主内，公共 registry 只有 `0.0.x`），独立 CI 装不上。workflow 只**断言产物存在**（`lib/index.js` + `CHANGELOG.md`）→ `npm publish --provenance --ignore-scripts`（`--ignore-scripts` 跳过 `prepublishOnly` 的 `tsc`，否则缺 `@types/node` 会 TS2688；`lib/` 随 git 入库，发布不需要构建）→ 自动创建/更新 GitHub Release（notes 由 `scripts/release-notes.mjs` 抽取，双语）。
 3. **npm 认证 = Trusted Publishing（OIDC）**：workflow 靠 `id-token: write`，**不设** `NODE_AUTH_TOKEN`/`registry-url`（设了会退回 token 认证或 `E404`；Node 24 是 `npm ≥ 11.5.1` 的前提）。**因此质量门全在本机**：`npm run build` 后 `lib/` 入库 + `npm test` 绿 + 独立模型家族 review + 本机端到端验证（见上「E2E 门禁」）+ CHANGELOG 两半定稿。
 4. 发布前按全局规则完成 code review 后 push tag（流程见全局规则，措辞不落本公开文档）。
-5. **★ 发布前必做：语义/行为变化 → 逐段重读 README 与 CHANGELOG**（不能只改「我记得动过的那几处」）。
+5. **★ 发布后必做：issue 闭环（2026-11-04 补入 SOP）**——「发布完成」= 产物上线 **且** 对应 issue 已回复并关闭 **且** 贡献者已登记，三者缺一不算完成：
+   - 发布前先 `gh issue list --state open`，确认本次改动对应哪条 issue，并把它的验收要点落到 E2E 证据表；
+   - 在 issue 里回复：确认成立 / 逐条核实报告者的根因 / 修了什么 / 证据 / **仍未覆盖的边界** / 版本号（用报告者的语言）；
+   - 关闭：`gh issue close <n> --reason completed`，或 commit/tag 说明写 `Fixes #<n>`——**`Refs #<n>` 不会关闭**（v0.18.0 漏掉的正是这一步）；
+   - 贡献者登记进 README 中英 Contributors 表（bug 报告 / 根因分析同样计入）；
+   - 宿主侧根因要写明归属（如 `dsh-subagent` 只传播内建预设身份），避免报告者误判为自己配置问题。
+   **验收**：`npm test` 断言 AGENTS.md 与本节都保留该步骤的关键词，防止文档被悄悄删掉。
+6. **★ 发布前必做：语义/行为变化 → 逐段重读 README 与 CHANGELOG**（不能只改「我记得动过的那几处」）。
    2026-09-12 v0.15.1 就因此把**旧政策表述**随包发出（README 仍写 `risk-based`/`stays forbidden`，
    CHANGELOG 的 0.15.1 段仍写「底线不变：仍然不能仅凭用户请求获得许可」）。现已加**机械守卫**：
    `npm test` 会断言 README 中英不含被取代的政策措辞、且都写明「用户是最终决断者 / 硬底线 /
