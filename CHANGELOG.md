@@ -7,6 +7,20 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ### Changed
 - (track upcoming changes here; moved into a dated version section at release time — Keep a Changelog)
 
+## [0.18.0] — 2026-11-04
+
+### Added
+- **Permanent-deletion commands are rejected outright.** In auto mode, `rm`, `unlink`, `shred`, `git rm`, `git clean -f…`, `find … -delete`, `rsync --delete*`, `del` / `rd /s` / `Remove-Item -Recurse` — including the same commands behind `sudo` / `env` / `xargs` / `eval` / `busybox` / `su -c`, a shell payload (`sh -c`, `bash -lc`, `find -exec`), a `$( … )` / backtick substitution, or a path prefix — are hard-rejected before they run, and the rejection tells the agent to use `trash`. This covers commands that stay inside the workspace, so an in-workspace `rm -rf` is no longer silent and unrecorded.
+- **Sessions that inherit auto mode are now guarded.** A subagent or AgentTeams worker created from an auto-mode session used to run entirely unguarded: its own permission preset is unset, so the gate treated it as "not auto mode" and did nothing. The gate now walks the parent-session chain and applies the deterministic rules (deny band, deletion guard, allow band, path trust) to those sessions as well. They do not reach the classifier — there is no approval answerer behind a child session.
+
+### Changed
+- The auto-mode guidance injected into the session now names `trash` as the allowed way to delete, so the agent knows the replacement before it hits a denial.
+- `rm -rf node_modules` is rejected too. Deleting build directories is recoverable by reinstalling, but the command itself is not recoverable, so it takes `trash` like everything else.
+- The guard reads the executed command text only, never the justification prose: a reason that mentions deletion no longer influences the decision, and a delete command quoted as an ordinary argument (`echo "rm -rf x"`, `git commit -m "drop rm -rf"`) is not treated as an action.
+
+### Fixed
+- A blocked deletion now always leaves an audit record. Previously neither a rejection nor the command itself produced a `decisions.jsonl` entry, so an irreversible delete could leave no trace.
+
 ## [0.17.0] — 2026-10-17
 
 ### Changed
@@ -140,6 +154,20 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 ## [Unreleased]
 
 （发布前在此跟踪变更；发布时移入带日期的版本段——Keep a Changelog）
+
+## [0.18.0] — 2026-11-04
+
+### 新增
+- **永久删除命令现在直接拒绝。** auto mode 下，`rm`、`unlink`、`shred`、`git rm`、`git clean -f…`、`find … -delete`、`rsync --delete*`、`del` / `rd /s` / `Remove-Item -Recurse`，以及把它们藏在 `sudo` / `env` / `xargs` / `eval` / `busybox` / `su -c`、shell 载荷（`sh -c`、`bash -lc`、`find -exec`）、`$( … )` / 反引号替换或路径前缀后面的写法，都会在执行前被硬拒，拒绝理由让 agent 改用 `trash`。发生在工作区内的命令同样适用，所以工作区里的 `rm -rf` 不再静默执行、也不再有记录缺口。
+- **继承 auto mode 的会话也纳入管辖。** 由 auto-mode 会话派生的子代理或 AgentTeams worker 此前完全不设防：它自己的权限预设是空的，闸门据此判定「不是 auto mode」而直接放行。现在闸门会沿父会话链上溯，对这些会话同样执行确定性规则（deny 频带、删除守卫、allow 频带、路径信任）。它们不进分类器——子会话身后没有审批答复器。
+
+### 变更
+- 注入会话的 auto-mode 指引现在写明 `trash` 是允许的删除方式，agent 在撞上拒绝之前就知道替代品。
+- `rm -rf node_modules` 同样被拒。重装即可恢复，但这条命令本身不可恢复，所以和其他删除一样走 `trash`。
+- 守卫只读**会被执行**的命令文本，绝不读 justification 散文：拒绝理由里提到删除不再影响判定，而把删除命令当普通参数引用（`echo "rm -rf x"`、`git commit -m "drop rm -rf"`）不算动作。
+
+### 修复
+- 被拦下的删除现在一定留审计记录。此前既不拒绝、也不写 `decisions.jsonl`，不可逆删除可以零留痕。
 
 ## [0.17.0] — 2026-10-17
 

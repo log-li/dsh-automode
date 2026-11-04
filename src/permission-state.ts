@@ -108,3 +108,110 @@ export function permissionSnapshot(ctx: Context, session: Session): PermissionSn
 
   return {};
 }
+
+/** The preset name this plugin owns (`cordis.patch.yml` → `presets.auto-mode`). */
+const AUTO_MODE_PRESET = 'auto-mode';
+
+/** How far up the `header.parentSession` chain the inheritance walk goes. */
+const MAX_INHERITANCE_DEPTH = 4;
+
+/** Which session supplied the auto-mode identity for a gate decision. */
+export interface AutoModeCoverage {
+  /** Whether the pre-execute gate must run for this session. */
+  readonly covered: boolean;
+  /**
+   * `self` = the session's own preset; `ancestor` = inherited; `none` = covered by
+   * neither; `unresolved` = a delegated session whose ancestry cannot be walked
+   * (parent not resident / store unavailable / depth exhausted) — same decision as
+   * `none`, but recorded in the audit trail instead of failing silently.
+   */
+  readonly via: 'self' | 'ancestor' | 'none' | 'unresolved';
+  /** The ancestor session whose preset covered this one (`via === 'ancestor'`). */
+  readonly ancestorSessionId?: string;
+}
+
+/** The services we probe for an id → session lookup (both optional). */
+interface SessionLookupHost {
+  get?: (name: string, strict?: boolean) => unknown;
+}
+
+/**
+ * Resolve one session by id through the host registry.
+ *
+ * Prefers the durable `sessions` store (works for sessions that are not live);
+ * falls back to the live `agents` registry. Both are probed at runtime because
+ * this plugin does not declare either service in its `inject` list — a missing
+ * service must degrade to "not resolvable", never to a load-time failure.
+ */
+function sessionById(ctx: Context, id: string): Session | undefined {
+  const host = ctx as unknown as SessionLookupHost;
+  if (typeof host.get !== 'function') return undefined;
+  try {
+    const store = host.get('sessions') as { get?: (sid: string) => Session | undefined } | undefined;
+    const found = store?.get?.(id);
+    if (found) return found;
+  } catch {
+    /* probe only */
+  }
+  try {
+    const agents = host.get('agents') as { get?: (sid: string) => { session?: Session } | undefined } | undefined;
+    const live = agents?.get?.(id)?.session;
+    if (live) return live;
+  } catch {
+    /* probe only */
+  }
+  return undefined;
+}
+
+/**
+ * Whether this session is governed by auto mode — directly or through a parent.
+ *
+ * A subagent/teammate session is created with its OWN permission projection;
+ * the host only propagates its built-in `auto` / `danger-full-access`
+ * identities into children, so a third-party preset like `auto-mode` never
+ * reaches them (and their approval policy is pinned to `never`). Without the
+ * ancestry walk the gate silently no-ops for every spawned agent — the gap
+ * reported in issue #4.
+ *
+ * Only DELEGATION lineage counts: `header.parentSession` is shared with forked
+ * sessions ("seed lineage"), and a fork is a copy of a conversation the user
+ * reopens under their own chosen preset — enforcing auto mode on it because its
+ * source session was in auto mode would override that choice. The host marks
+ * delegations with `origin: 'subagent'` and a positive `delegationDepth`;
+ * anything else is treated as not delegated.
+ *
+ * Failure direction: an unresolvable ancestor chain means "not covered", i.e.
+ * the historical behaviour. That keeps unrelated sessions untouched instead of
+ * enforcing on a session whose lineage cannot be established.
+ */
+export function autoModeCoverage(ctx: Context, session: Session): AutoModeCoverage {
+  const own = permissionSnapshot(ctx, session).preset;
+  if (own === AUTO_MODE_PRESET) return { covered: true, via: 'self' };
+  // The session's OWN recorded identity wins over an ancestor's: a user who
+  // switched this session (or a host that propagated a built-in identity such as
+  // `danger-full-access`) chose a different preset, and the gate must not override
+  // it. Only a session with NO preset of its own inherits (v0.18.0 review).
+  if (own !== null && own !== undefined) return { covered: false, via: 'none' };
+
+  type Header = { parentSession?: string; origin?: string; delegationDepth?: number };
+  const header = (session as unknown as { header?: Header }).header;
+  const isDelegated = header?.origin === 'subagent'
+    || (typeof header?.delegationDepth === 'number' && header.delegationDepth > 0);
+  if (!isDelegated) return { covered: false, via: 'none' };
+
+  let cursor: Header | undefined = header;
+  for (let depth = 0; depth < MAX_INHERITANCE_DEPTH; depth++) {
+    const parentId = cursor?.parentSession;
+    if (!parentId) break;
+    const parent = sessionById(ctx, parentId);
+    // A delegated session whose parent cannot be resolved is NOT covered (the
+    // historical behaviour), but the caller records it: a stale parent id must
+    // not make coverage disappear without a trace.
+    if (!parent) return { covered: false, via: 'unresolved' };
+    if (permissionSnapshot(ctx, parent).preset === AUTO_MODE_PRESET) {
+      return { covered: true, via: 'ancestor', ancestorSessionId: String(parentId) };
+    }
+    cursor = (parent as unknown as { header?: Header }).header;
+  }
+  return { covered: false, via: cursor?.parentSession ? 'unresolved' : 'none' };
+}

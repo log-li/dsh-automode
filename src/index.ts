@@ -111,6 +111,20 @@ export const ALLOWLIST_SENTENCE =
   'prompt — for a trusted target there is none. Only edit the allowlist config after the ' +
   'user explicitly asks; otherwise propose the change and wait.';
 
+/**
+ * v0.18.0 (issue #4): the deletion policy is now enforced deterministically in
+ * the pre-execute gate, so the model has to know the allowed replacement
+ * BEFORE it hits the wall. Kept next to the allowlist sentence because both are
+ * standing auto-mode guidance rather than per-call denials.
+ */
+export const DELETION_SENTENCE =
+  'Auto-mode deletion policy: permanent deletion commands (rm, unlink, shred, git rm / git clean -f, ' +
+  'find -delete, del, Remove-Item) are rejected deterministically before they run — the reviewer ' +
+  'never sees them. To delete, use `trash <file>` (trash-cli / freedesktop Recycle Bin): it stays ' +
+  'allowed and the target is recoverable. Do not retry the same deletion through a wrapper ' +
+  '(sudo / xargs / eval / busybox / su -c), a shell payload (sh -c, bash -lc, find -exec) or a ' +
+  'command substitution ($(rm …), `rm …`) — the guard reads those too.';
+
 // ---- Helpers ----
 
 export function isAuto(ctx: Context, session: Session): boolean {
@@ -224,9 +238,17 @@ async function decideAuto(
 
   // 1. Hard deny rules (deterministic regex bands)
   const denyPatterns = config.deny.map(compileRegex);
-  const denyHit = classifyBand(toolName, reason ?? '', args, denyPatterns, [], []);
+  const denyHit = classifyBand(toolName, args, denyPatterns, [], []);
   if (denyHit.action === 'deny') {
     logger.info(`deny band "${denyHit.tier}" matched → reject ${toolName}`);
+    if (denyHit.tier === 'deletionGuard') {
+      appendDecision({
+        event: 'deletion-guard',
+        tool: toolName,
+        sessionId: String(agent.session.id ?? '?'),
+        detail: `approval path: ${denyHit.detail}`,
+      });
+    }
     return 'rejected';
   }
 
@@ -519,6 +541,11 @@ export function apply(ctx: Context, rawConfig: unknown): void {
           name: 'auto-mode:allowlist',
           order: 116,
           text: () => (isAuto(ctx, agent.session) ? ALLOWLIST_SENTENCE : ''),
+        });
+        agentScope.systemPrompt.context({
+          name: 'auto-mode:deletion',
+          order: 117,
+          text: () => (isAuto(ctx, agent.session) ? DELETION_SENTENCE : ''),
         });
       });
     });

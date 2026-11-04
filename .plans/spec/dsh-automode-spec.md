@@ -45,15 +45,15 @@ Status: implemented
 src/
   index.ts           主入口：preset 管理、approval answerer（decideAuto）、熔断器复位、/auto + /auto-status、系统提示注入
   config.ts          配置 schema（deny/allow 频带、allowPaths、分类器路由、熔断器阈值、failClosed 等）
-  bands.ts           确定性频带引擎（deny 正则 + allow 前缀 glob + 复合 shell 分段解析 + bash 写命令目标提取）
-  pre-execute.ts     pre-execute 门（预设闸门、真实路径判定、curated allowPaths、分类器预审、熔断器跳闸注入、approval 桥接记录）
+  bands.ts           确定性频带引擎（deny 正则 + allow 前缀 glob + 复合 shell 分段解析 + bash 写命令目标提取 + 删除守卫）
+  pre-execute.ts     pre-execute 门（预设/祖先继承闸门、删除守卫、真实路径判定、curated allowPaths、分类器预审、熔断器跳闸注入、approval 桥接记录）
   classifier.ts      分类器（两阶段 + 鲁棒解析 + reasoningEffort + 意图感知缓存签名 + 诊断日志）
   rules.ts           散文规则匹配（$defaults 展开）
   prompt.ts          提示构造（<recent_user_intent> + 意图权重 + 危险优先 + 两态契约）
   cache.ts           裁决缓存（按 tool+command+intent 签名，maxArgsChars）
   breaker.ts         熔断器（3 连续 / 20 总 DENY → 跳闸）
   bridge.ts          AllowPathBridge（approval 桥接：callId → allowed-once，TTL + 容量）
-  permission-state.ts 权限事实兼容层（permissionSnapshot：0.1.5+ 投影 / 旧内核事件日志双路径）
+  permission-state.ts 权限事实兼容层（permissionSnapshot：0.1.5+ 投影 / 旧内核事件日志双路径）＋ autoModeCoverage（祖先继承判定）
   log.ts             持久化 JSONL 日志（appendDecision）
 ```
 
@@ -61,13 +61,16 @@ src/
 
 ```
 工具调用到达
-  ├─ [pre-execute 门]（所有工具，第一道防线；仅 auto-mode 会话生效）
-  │    ① 预设闸门：非 auto-mode → 放行（不干预用户所选沙箱/审批预设）
+  ├─ [pre-execute 门]（所有工具，第一道防线；auto-mode 会话，以及祖先会话是 auto-mode 的子会话）
+  │    ① 预设闸门：本会话 preset=auto-mode，或沿 header.parentSession 链找到 auto-mode 祖先
+  │        → 继续；都不是 → 放行（不干预用户所选沙箱/审批预设）
   │    ② 只读工具 → deny 检查（扫目标路径）→ 无 deny 放行
   │    ③ deny 频带（正则硬拒）→ 拒绝
-  │    ④ allow 频带（前缀 glob，非复合）→ 放行
-  │    ⑤ 文件工具真实信任检查（in-tree OR allowPath，无提权时）→ 放行
-  │    ⑥ 提权意图 OR 越区文件操作 → allowPath 判定（文件工具 targetPaths + bash 写命令 bashTargets）
+  │    ④ 删除守卫（matchDeletion，只扫命令原文，不看散文）→ 拒绝并提示改用 `trash`（v0.18.0）
+  │    ⑤ allow 频带（前缀 glob，非复合）→ 放行
+  │    ⑥ 文件工具真实信任检查（in-tree OR allowPath，无提权时）→ 放行
+  │    ⑦ 只有通过祖先继承的会话：确定性层到此为止 → 放行（不进分类器，无审批可桥接）
+  │    ⑧ 提权意图 OR 越区文件操作 → allowPath 判定（文件工具 targetPaths + bash 写命令 bashTargets）
   │        命中 → 记录 approval 桥接（callId）→ 放行
   │        未命中 → 意图 hash 进缓存签名 → 缓存命中 DENY？→ 拒绝（计入熔断器）
   │        未命中 → 分类器预审（两阶段）→ allow / reject（failClosed 兜底）
@@ -114,6 +117,13 @@ src/
 
 #### 预执行门作用域
 - 仅在 `auto-mode` 会话生效；非 auto preset（read-only / workspace-write / danger-full-access）一律放行，不与用户所选沙箱/审批预设冲突。
+- **子会话按祖先继承（v0.18.0）**：会话自身的 `preset` 不是 `auto-mode` 时，沿 `session.header.parentSession` 上溯（深度上限 4 层），只要有一层祖先的 preset 是 `auto-mode`，该会话就受门禁管辖。依据：宿主 `dsh-subagent` 的 `captureDelegatedPolicyOverrides` **只把内建 `auto` / `danger-full-access` 两个身份写进子会话**，第三方预设（本插件的 `auto-mode`）一律不写，子会话的 `permissions` 投影停在初值 `{preset:null, sandbox:null, approval:null, seeded:false}`，同时 `approval/policy` 被钉成 `never` ⇒ 不继承时子会话（含 AgentTeams worker）两条防线全部失效、且不留任何审计记录（issue #4 实测 3 个 worker 全为 0 条）。
+- **只认「委派」血缘，不认「fork」血缘**（v0.18.0）：`header.parentSession` 同时也是「会话 fork 自哪个会话」的字段，而 fork 是用户重开一段对话、会自己另选预设的场景——按来源会话的 auto-mode 去管辖它等于覆盖用户的选择。因此只有 `header.origin === 'subagent'` 或 `header.delegationDepth > 0`（宿主 `childSessionMeta` 给每个委派子会话写的两个字段）才进入上溯；其余一律「不受管辖」。AgentTeams 的 teammate 也走同一条 `ctx.subagents` 创建路径，因此同样满足该判据。
+- **继承的解剖边界（刻意）**：继承会话只跑**确定性层**（deny 频带 + 删除守卫 + allow 频带 + 文件工具信任检查），**不进分类器**——子会话没有可用的审批答复器（宿主把 `approval/policy` 钉成 `never`），分类器产出的 reject 会直接变成硬失败而没有转人工的出口；放行 allowPath 桥接也无意义（桥接只服务于审批路径）。这一层的活体覆盖判据见「已知问题 → 子会话的分类器覆盖未做」。
+- **自身预设优先（v0.18.0 复核后补）**：子会话**自己**已有非空 `preset`（用户在选择器里改过，或宿主传播了 `danger-full-access` 这类内建身份）时以自身为准，不再按祖先继承——否则等于用祖先的 auto-mode 覆盖用户对子会话的显式选择（与本插件「不干预非 auto-mode」的立场冲突）。只有自身 preset 为空的委派会话才进入上溯。
+- **继承的失效方向**：上溯只读祖先当前投影，不做缓存失效通知。用户**关闭** auto mode 后，已存在的子会话仍会被继续审查（更严，可接受）；用户**开启** auto mode 前就已存在的子会话要等它结束或重启才被覆盖（更松，属已知边界）。
+- **解析不到祖先时留痕（v0.18.0 复核后补）**：委派会话但父会话解析不到（父已释放 / 会话存储不可用 / 深度用尽）时，判定同「不受管辖」（保持历史行为），但会写一条 `pre-execute-coverage-unresolved`（每会话一次）——不允许「覆盖静默消失」，否则一个陈旧父 id 就能让闸门盲掉且无痕。
+- 继承判定**每次调用现场计算**（祖先投影是内存读；只有子会话才触发会话查找），并对「首次被继承覆盖」的会话写一条 `pre-execute-inherited` 审计事件，使「这个子会话到底受不受管辖」可以事后复盘。
 
 #### 权限预设图标
 - `cordis.patch.yml` 的 `presets.auto-mode` 声明 `icon`（内层 SVG path `d`，bolt）；是否渲染取决于 DSH 是否支持消费预设 `icon`（原生 DSH 硬编码 glyph 映射、会静默忽略；本机 DSH 经 `dsh-permission-preset-icon.mjs` 补丁支持）。图标纯外观，不渲染时行为不变。
@@ -147,7 +157,8 @@ src/
 - **复合目标的相对路径按「段的当时 cwd」解析为绝对路径**（v0.15.3，独立复核时实测出的**既有**信任证明失真）：此前相对目标原样返回，由 allowPath 校验按**会话 cwd** 解析 —— `cd /tmp/outside && cp a workspace/evil` 证明的是 `/workspace/workspace/evil`（在信任根内），实际写的是 `/tmp/outside/workspace/evil`（信任根外），带提权时整条调用被桥接为 `danger-full-access` 零评审放行。现 `collectSegmentDestinations` 对每段用 `resolve(cwd.value, dest)` 归一（`cd` 已被跟踪）→ 证明与真实写入点一致。**方向是「证明更准」**：`cd` 进信任根内的相对写入仍快速放行，`cd` 到根外的相对写入回退分类器；无 `cd` 的调用语义不变（当时的 cwd 即会话 cwd）。
 - **展开后仍含 `$` 的「目标或命令名」一律拒绝**（v0.15.3，独立 review 检出的既有同类盲点）：`expandShellVars` 只解析**命令内赋值**与 `$HOME`，其余（`$TMPDIR`、`$PWD`、`$XDG_*`…）保持字面量；而字面量 token 词法上必然落在**恒为信任根的会话 cwd** 之下 → 证明通过、真实写点却在别处（`git … commit && cp a "$TMPDIR/y"` 实测过证）。现 `collectSegmentDestinations` 对任何归一后仍含 `$` 的**目标** `return false`（整条调用回退分类器）——兑现 `expandShellVars` 处「未知变量最终 fail-closed」的既有注释。**命令名同样受检**（第三轮 review 的兄弟洞）：`cp a /allowed && "$EVIL"/echo hi` 会把 base token `$EVIL/echo` 按末段名匹配成良性 `echo`、不产出目标而**搭车**，整条被桥接后即执行任意二进制。**带路径前缀的 token 不得冒充良性工具**（第四轮 review 的更深一层）：良性搭车现要求 `first === base`（无路径成分）——`./echo hi`、以及经同命令赋值解析后的 `E=evil; "$E"/echo hi` 都回退分类器；**写命令**仍按末段名匹配（`~/bin/trash` 这类受支持的包装脚本形态不受影响，其目的地本就被证明）。**边界**：单命令与复合命令同一处理；`$HOME` 与命令内 `$VAR` 赋值不受影响；文件名里**字面** `$` 也一并 fail-closed（刻意方向）。
 - **git 写命令覆盖**（2026-09-04）：`git add/commit/push` 返回其**仓库根**（`-C` 解析、否则取有效 cwd，`cd <dir>` 是受跟踪的良性导航命令）→ 仓库根 in allowPath → 信任。`reset --hard`/`clean`/`rebase`/`merge` 等改写型命令**刻意不含**（留在分类器/硬拒带）；fd-dup 重定向（`2>&1`）不是文件写，不使快速路径失效。
-- **安全边界**：deny 频带仍最先执行（`/etc`、`.ssh/`、`.env`、凭据库文件名、内联密钥材料、管道执行等仍硬拒）；删除类命令（`rm`）不在写命令白名单；allowPath 是用户显式声明的全信任目录，误放风险限于「把文件写进用户自己信任的目录」。**频带只扫「操作」**（v0.15.1，见「已知问题」）：散文承载型工具的参数散文不再当操作扫。
+- **安全边界**：deny 频带仍最先执行（`/etc`、`.ssh/`、`.env`、凭据库文件名、内联密钥材料、管道执行等仍硬拒）；删除类命令（`rm`）**在闸门层一律硬拒**（v0.18.0，见下条），且从来不在写命令白名单里——allowPath 信任永不授权删除；allowPath 是用户显式声明的全信任目录，误放风险限于「把文件写进用户自己信任的目录」。**频带只扫「操作」**（v0.15.1，见「已知问题」）：散文承载型工具的参数散文不再当操作扫。
+- **删除守卫（v0.18.0，闸门第 ④ 步）**：`matchDeletion(commandText)` 只看**命令原文**（绝不拼 `reason` 或任何叙述），命中即 `deny`，理由指向 `trash`（可恢复删除，`trash` 仍在 `DEFAULT_ALLOW`）。识别面：`rm` / `unlink` / `shred` / `srm` / `wipe`（含 `sudo`、`nohup`、`env`、`xargs` 等包装词与 `/bin/rm`、`./rm` 路径前缀）、`git rm`、`git clean` 带 `f` 的任意旗标组合、`find … -delete`、`rsync --delete*`、`sh -c` / `bash -c` / `pwsh -Command` 的嵌套载荷，以及 Windows 的 `del` / `erase` / `rd`/`rmdir` 带 `/s` / `Remove-Item` 带 `-Recurse`/`-Force`。**`rm -rf node_modules` 不再例外**（重装可恢复，但删除本身不可撤销；护栏不确定即拒的立场优先）。**已知误报面（v0.18.0 复核后更正）**：守卫只看**会被执行**的文本，所以引号里的删除字样当普通参数（`echo "rm -rf x"`、`git commit -m "drop rm -rf"`、`printf '%s' "rm -rf"`）**不会**被拒；会被跟进的是 `sh -c` / `bash -lc` / `eval` / `busybox` / `su -c` / `find -exec` 的载荷，以及 `$( … )` 与反引号替换。**真实误报面**是包装词的参数被当成命令（如 `xargs echo rm -rf` 会被拒）与「非数据消费者的 heredoc 正文仍被扫」；两者方向都是 fail-closed。写文档请用 `write` 工具。
 - **allowPath ≠ 文件沙箱权限**（2026-09-01 文档化）：`config.allowPaths` 只免 auto-mode 评审，**不改变 DSH 文件沙箱**对 workspace 外路径的写权限——白名单路径写 workspace 外仍需 `sandbox_permissions: danger-full-access` 提权，而该提权对白名单路径经 approval 桥接**零评审自动放行**。
 
 #### Agent 可操作指引（2026-09-14）：写 allowPath 白名单内路径时主动带提权
@@ -287,6 +298,13 @@ src/
    - **影响**：**运行时不受影响**（类型擦除；v3 分支在 0.2.x 不可达；返回 `undefined` 合规），但「通过类型检查」这句话不能说。
    - **修法**：给 `ContentBlockMap` 做模块增强或本地窄类型 + 监听器显式 `return undefined`；或加一条 opt-in 的 `test:types-0.2`（需本机有 0.2.x 安装）。
    - **判据（防复发）**：凡声称「在某宿主版本通过类型检查」，先确认 `node_modules` 里装的就是那个版本。
+2b. **子会话的删除守卫/deny 只到确定性层（v0.18.0 的刻意边界，优先级 P2）**
+   - **现状**：祖先继承的会话跑 deny 频带 + 删除守卫 + allow 频带 + 文件工具信任检查，**不进分类器**（无审批出口，reject 会变成硬失败）。因此「子会话发起需要判断的提权/越区动作」仍然只靠宿主沙箱。
+   - **为什么不一次做**：把分类器接给子会话要先解决 reject 的转人工出口（宿主把子会话 `approval/policy` 钉成 `never`），属独立一次 spec-first 变更。
+   - **判据**：子会话的 `decisions.jsonl` 里能看到 `pre-execute-inherited`（首次）+ `pre-execute-deny`（命中时）；看不到任何 `decision` 事件属预期。
+2c. **删除守护的剩余命中盲区（v0.18.0 记录，优先级 P3）**
+   - 未纳入：`python3 -c "shutil.rmtree(...)"`、Node `fs.rmSync`、`truncate -s 0 <file>`、重定向覆盖写（`> file`）、`mv <target> /dev/null`。前两类是解释器载荷，字符串匹配会大量误报；后两类属「覆盖写」而非字面删除，与「写目标提取」缺口（A1）同源，留待一并收敛。
+   - 判据（防过度宣称）：对外只说「`rm` 类删除在闸门层被确定性拦下」，不说「一切不可逆删除都被拦」。
 
 ### B. `icon` 补丁（`patches/`，不影响审批行为）
 
@@ -485,7 +503,7 @@ src/
     并新增**行为型**断言（预筛输入必须含命令原文）——行为断言才是能真正锁住 S1 的那类。
 
 - **已登记待评估的既有取舍**（2026-09-12 review 轻12；**v0.15.3 回填**——此前只写在 v0.14.4 的历史条目里、本节缺失，属「spec 虚记」）：
-  - **gate 不执行 deletionGuard**：`deletionGuard` 档在 `classifyBand`（`bands.ts`：永久删除 → 提示改用 `trash`），而 pre-execute 门走 `scanDenyBand`（v0.15.1 收敛后的单一扫描），不跑 `matchDeletion` → 该档实际上只对 approval 路径生效；非提权 bash 调用本就不进分类器（见上一条覆盖面取舍），所以这一类无兜底。
+  - **gate 不执行 deletionGuard**（**v0.18.0 已修复**，见「变更历史」；本条保留作回归背景）：`deletionGuard` 档在 `classifyBand`（`bands.ts`：永久删除 → 提示改用 `trash`），而 pre-execute 门走 `scanDenyBand`（v0.15.1 收敛后的单一扫描），不跑 `matchDeletion` → 该档实际上只对 approval 路径生效；非提权 bash 调用本就不进分类器（见上一条覆盖面取舍），所以这一类无兜底。**修复时补充核实的三个新事实**（issue #4 之前未登记）：① 唯一调用点传的是 `` `${reason}\n${commandText}` ``，而 `DELETION_RE` 的 `^` 无 `m` 标志、字符类又不含 `\n` ⇒ 除了命令串本身带 `;&|` 的情形，该档在 approval 路径**也必然 miss**，等于死代码；② 传 `reason` 还违反本仓「只扫操作、不扫散文」的硬约束（模型解释里提一句 `rm -rf` 就会误拒）；③ 普通 bash 透传不写任何审计记录 ⇒ 不可逆删除可以**零留痕**。
   - **approval 桥接按裸 `callId` 索引、无会话隔离**：`bridge.record(callId, …)` / `take(callId, toolName)` 不带 sessionId——跨会话同名 callId 理论可命中（TTL 60s + 消费即删 + toolName 校验使其实际很难发生，但隔离性弱于其它缓存）。
   - **`ls*` 等宽 glob**：`DEFAULT_ALLOW` 的 `ls*` 会匹配 `lsof`、`lsblk` 等非列表命令（前缀 glob 语义即如此）。
   - **allowPath 内的 `git push --force` 跳过分类器**：`bashWriteDestinations` 对 `git add/commit/push` 返回仓库根、不区分 `--force`，仓库根在白名单内即确定性放行（`reset --hard`/`clean`/`rebase`/`merge` 仍刻意不在快速路径）。
@@ -555,6 +573,8 @@ src/
 | A3 | deny 拦下 | 目标动作**未执行**（文件未被创建/未被移动）+ 审计留下 deny 记录（含命中原因） | `decisions.jsonl` + 目标侧核对 |
 | A4 | 白名单提权桥接 | 白名单内、workspace 外：`curated allowPath` → `approval-bridge` → `allowed-once`，**零分类器、零人工** | `decisions.jsonl` |
 | A5 | 会话格式兼容 | `npm run test:v4` PASS（真实历史重开 + 注入标识归一 + 退役形态红对照） | 脚本输出 |
+| A6 | 删除守卫拦下（v0.18.0 起必跑） | 工作区内 `rm -rf <临时目录>` **未执行**（目录仍在）+ 审计留 `pre-execute-deny` 且 detail 标明删除守卫；红对照：旧版同命令执行成功且零记录 | `decisions.jsonl` + 目标侧核对 |
+| A7 | 子会话继承（v0.18.0 起必跑） | auto-mode 会话派生的子会话发起 `rm -rf` **被拦**，且 `decisions.jsonl` 同时有 `pre-execute-inherited` 与 `pre-execute-deny`；红对照：旧版子会话零记录、命令执行成功 | `decisions.jsonl` + 目标侧核对 |
 
 **B. 可用结构断言替代（必须写明理由；改动触及其逻辑时升格为必跑）**
 - **审批路径的解释注入**（`decideAuto` 判 reject 时的注入）：2026-09-23 实测**造不出来**——「让模型去做坏事」这种提示**本身就是用户请求**，分类器按「用户是最终决断者」放行（实测 `/usr/local/etc` 写入被判 `pre-execute-allow` + `allowed-once`）。该注入只在「gate 放行到审批 + 缓存未命中 + 判 reject」三条件同时成立时可达 ⇒ **结构性替代**（同一 `AUTO_MODE_SOURCE` + 同一 `agent.inject` + smoke 的 7 处调用点断言）；要活体触发得构造「非用户请求」的注入式场景。
@@ -624,6 +644,45 @@ scripts/e2e-isolated-home.sh reset                 # 清 sessions + 审计记录
    教训：**能被测试卡住的，就不要靠记忆**；发布流程必须有一道「文档描述 == 当前行为」的机械关卡。
 
 ## 变更历史
+
+### v0.18.0（2026-11-04）：删除守卫接进闸门 + 子会话按祖先继承（issue #4）
+
+- **触发**：issue #4（用户实测，Windows 11 + DSH Desktop，`0.17.0`）——`rm -rf ./automode-repro` 在 auto-mode 会话里成功执行，`decisions.jsonl` **行数与 SHA-256 前后完全一致**（2326 行），而同会话 `echo " .env"` 照常被 deny 并留痕。同一 issue 还报出 3 个 AgentTeams worker 会话 `permissions.preset` 为 `null`、审计 0 条。
+- **核实（逐条，不采信 issue 的推断直接改码）**：
+  1. 删除守卫只有唯一调用点 `bands.ts` 的 `classifyBand`（approval 瀑布 `index.ts:227` 才走到），闸门的 import 里没有 `matchDeletion` ⇒ 该档在生产路径上从未执行。
+  2. 调用点传的是 `` `${reason}\n${commandText}` ``，`DELETION_RE` 的 `^` 无 `m` 且字符类不含 `\n` ⇒ 除命令自带 `;&|` 外**必然 miss**；实测 `"escalate: …\nrm -rf x"` 与 `"\nrm -rf x"` 均 MISS。**该档因此是死代码**，不只是「没接线」。
+  3. 非提权 bash 调用只有 `isEscalation` / `isOutOfTreeFileOp` 两个入口能进分类器，`rm` 两者都不满足 ⇒ 透传，且透传分支不写任何审计事件。
+  4. 子会话 `preset:null` 的根因在**宿主**：`dsh-subagent` 的 `captureDelegatedPolicyOverrides` 只传播内建 `auto` / `danger-full-access` 身份，第三方预设不写，并把子会话 `approval/policy` 钉成 `never`。插件侧不改继承就永远够不着子会话。
+- **决策（用户 2026-11-04 拍板）**：
+  - **闸门层一律硬拒 `rm` 类删除**（含工作区内的 `rm -rf node_modules`），理由指向 `trash`；不做「只拒工作区外」的折中。
+  - **子会话按祖先继承**，只跑确定性层（deny + 删除守卫 + allow 频带 + 文件信任检查），**不进分类器**（子会话无审批出口）。
+  - **修法边界**：删除守卫的输入**只取命令原文**，绝不拼 `reason`——既修锚点 miss，又守「只扫操作、不扫散文」的硬约束。
+- **识别面（实现取向：分段 + 词法，而不是一条大正则）**：先按 `;` `&&` `||` `|` `&` 与换行切段（复用 `splitShellSegments`），再剥 `VAR=value` 赋值与包装词（`sudo`/`doas`/`env`/`command`/`nohup`/`time`/`exec`/`builtin`/`nice`/`stdbuf`/`xargs`），取命令词的 basename（`/bin/rm`、`./rm`、`\rm` 归一）；删除命令词 = `rm`/`unlink`/`shred`/`srm`/`wipe`/`del`/`erase`/`Remove-Item`，`rd`/`rmdir` 仅在带 `/s` 时算；子命令形式 = `git rm`、`git clean -<含 f 的旗标>`、`find … -delete`、`rsync --delete*`；解释器载荷（`sh/bash/zsh/fish/pwsh/powershell` 的 `-c`/`-Command`、`cmd /c`）**递归**再判一层。
+- **误报面（已知，写入 README）**：引号包住的删除字样（`printf '%s' "rm -rf"`）会被拒；`echo *` / `git log*` 等 allow 频带命令不受影响（删除守卫先于 allow 频带）。写文档用 `write` 工具。
+- **不做的事（刻意）**：不做「一切不可逆删除」的宣称（解释器内 API 载荷如 `shutil.rmtree`、覆盖写、`mv … /dev/null` 仍在盲区，见已知问题 2c）；不给子会话接分类器（见 2b）；不放宽宿主 `approval/policy: never` 的钉法（那是宿主的安全默认）。
+- **独立 review（跨家族，独立上下文）后的修正**：review 报【严重】2 条 + 【中等】3 条 + 【轻微】若干，逐条自查复现后**全部采纳**并已修正：
+  1. 【严重】组合短旗绕过——`bash -lc`、`sh -cx`、`bash -ilc` 不进解释器载荷递归（`-c` 只按整 token 匹配）⇒ 改为按旗标簇匹配（`-[A-Za-z]*c[A-Za-z]*`）。
+  2. 【严重】包装词解析只认删除命令作为取值 ⇒ `sudo -u root sh -c "…"`、`sudo -u root xargs rm -rf`、`eval rm -rf`、`su -c "…"`、`busybox rm -rf` 全部漏；改为**按包装词类型**剥离取值（取值型/用户型分开），并补 `eval`、`busybox`、`su`、`runuser`、`sg`、`chroot`、`fakeroot`、`ionice` 到包装词集合。
+  3. 【中等】命令替换不扫 ⇒ `$(rm -rf …)`、反引号、以及 `git commit -m "$(rm -rf x)"` 漏；改为在段内做平衡扫描后递归（忽略引号，双向 fail-closed）。
+  4. 【中等】`find … -exec sh -c "rm -rf {}" \;` 漏；`-exec` 后是解释器/包装词时递归载荷。
+  5. 【中等】子会话自身非空 preset 不终止继承（过严）；改为自身预设优先（见上）。
+  6. 【轻微】`printf '%s' "rm -rf"` 等「引号当参数」其实**不会**被拒——原 README/spec/系统提示的措辞把这说成会拒；三处已按实测更正为「只看会被执行的文本」。
+  7. 【轻微】`xargs echo rm -rf` 误拒（取值剥离把 `echo` 当参数值）；取值剥离改为只对**取值型**包装词生效。
+  8. 【轻微】heredoc 消费者按「行首词」判定（`export E=1; cat <<EOF` 会被当执行体）；改为回溯到最近命令分隔符。
+  9. 【轻微】`.exe`/`.cmd` 后缀（`powershell.exe -Command`、`rm.exe`）漏；`commandWordOf` 去后缀。
+  10. 【轻微】审批路径的 `deletion-guard` 审计事件无用例钉住；补结构断言。
+- **本轮 E2E 结果（2026-11-04，隔离实例 `/tmp/dsh-e2e-am018`：`HOME` 与 `DSH_HOME` 同时隔离，宿主 CLI 与 profile 独立，模型 `ocg-1/deepseek-v4.1-flash`）**：
+
+  | # | 链 | 结果 | 证据 |
+  |---|---|---|---|
+  | A1 | 加载 | ✅ | 隔离 home 的 `decisions.jsonl` 首行 `event:boot … dsh-automode v0.18.0 active (failClosed=true, preExecute=true)`；`--dump-config` 含 `- id: auto-mode` |
+  | A2 | 进入 auto mode | ✅ | 驱动走 `ctx.commands.execute(agent,'/auto')` → `{"kind":"success","text":"Auto mode enabled."}`；会话日志 `permission/preset{preset:"auto-mode"}` |
+  | A6 | 删除守卫拦下 | ✅ | 真回合里模型执行 `rm -rf victim-dir` → 审计 `pre-execute-deny`「deletion guard: permanent deletion command detected (rm)」→ **目标目录与文件仍在**（`ls` 证）；模型可见的工具结果是 `Error: dsh-automode denied this action (deletionGuard): … use \`trash <file>\` …`；会话日志 `tool/result.isError=true` |
+  | A7 | 子会话继承 | ✅ | 父会话用 `subagent` 派生子会话，子会话执行 `mkdir -p child-dir && rm -rf child-dir` → 审计 `pre-execute-deny … inheritedFrom=<父会话 id>`（子会话 id 为裸 UUID）+ 首次 `pre-execute-inherited`；**`child-dir` 从未创建**（整条复合被拒）；子会话把拒绝原文回报给父会话 |
+  | 红对照 | 旧版（`v0.17.0` 产物） | ⚠️ **未取得**（如实标注） | 把 profile 的插件链接指向 `git archive HEAD` 的 v0.17.0 副本后，隔离实例能 boot（`event:boot … v0.17.0`）且 `/auto` 成功，但真回合**未产生任何 assistant/tool 消息**（`agent/inbox/spliced` 随即被移除、无 `turn/end`），因此无法在该实例里复现「旧版执行 rm」。红侧证据改由 issue #4 的实测（2326 行 + SHA-256 前后一致、目录已删）与代码路径核验承担；**未把旧版红对照算作已通过**。 |
+  | A3/A4/A5 | deny 拦下 / allowPath 桥接 / 会话格式 | 未重跑 | 本次改动不触达这三条逻辑（A5 的 `test:v4` 仍在本机跑过 PASS）；按既有记录沿用 |
+
+  **边界**：A6/A7 是活体真回合（真模型、真工具管线、真审计日志、真目标侧核对）；未覆盖的是真实浏览器 UI 与 Windows 平台。`docs/auto-mode-flow.*` 图表**未重绘**——其粒度只到「层」，不含守卫步骤，README 的文字管线与本节已同步；要重绘需用原来的图表工具重新生成 HTML/PNG，本次不伪造。
 
 ### v0.17.0（2026-10-17）：DSH `0.2.x` 支持声明 + `icon` 补丁的判据与诊断修正
 

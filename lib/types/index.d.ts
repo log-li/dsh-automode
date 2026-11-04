@@ -28,6 +28,13 @@ export declare const inject: string[];
  * in the README, so the model does not have to learn it by hitting the error.
  */
 export declare const ALLOWLIST_SENTENCE: string;
+/**
+ * v0.18.0 (issue #4): the deletion policy is now enforced deterministically in
+ * the pre-execute gate, so the model has to know the allowed replacement
+ * BEFORE it hits the wall. Kept next to the allowlist sentence because both are
+ * standing auto-mode guidance rather than per-call denials.
+ */
+export declare const DELETION_SENTENCE: string;
 export declare function isAuto(ctx: Context, session: Session): boolean;
 /** v0.14.3: probe a (possibly removed) void setter off a namespace module. */
 export declare function probeSetter(module: unknown, name: string): ((...args: unknown[]) => void) | undefined;

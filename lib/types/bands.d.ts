@@ -72,8 +72,8 @@ export declare function tokenizeShell(cmd: string): string[];
  * evaluated against the session cwd (see `collectSegmentDestinations`).
  */
 export declare function bashWriteDestinations(cmd: string, cwd?: string): string[];
-/** Whether `text` contains a permanent-deletion command. */
-export declare function matchDeletion(text: string): string | null;
+/** Whether `commandText` contains a permanent-deletion command. */
+export declare function matchDeletion(commandText: string): string | null;
 /** Whether `text` is a read-only tool name. */
 export declare function isReadOnlyTool(toolName: string, readOnlyTools: readonly string[]): boolean;
 /** Whether the tool name is a file-path tool (targets are paths, not commands). */
@@ -136,8 +136,14 @@ export declare function proseSafeDenyPatterns(patterns: readonly RegExp[]): RegE
  * pattern list while `classifyBand` filtered it).
  */
 export declare function scanDenyBand(toolName: string, args: unknown, denyPatterns: readonly RegExp[]): string | null;
-/** Check whether an action matches a deny pattern, an allow pattern, or neither. */
-export declare function classifyBand(toolName: string, reason: string, args: unknown, denyPatterns: RegExp[], allowGlobs: RegExp[], readOnlyTools: readonly string[]): {
+/** Check whether an action matches a deny pattern, an allow pattern, or neither.
+ *
+ * v0.18.0: the `reason` (approval prose) parameter is GONE. It existed only to
+ * feed the deletion guard, and feeding it prose both killed the guard's anchor
+ * (`reason\ncommand` never matched `^`) and violated the "scan operations, not
+ * narration" rule. Callers that still hold the prose simply do not pass it.
+ */
+export declare function classifyBand(toolName: string, args: unknown, denyPatterns: RegExp[], allowGlobs: RegExp[], readOnlyTools: readonly string[]): {
     action: 'allow' | 'deny' | 'classify';
     tier: string;
     detail: string;

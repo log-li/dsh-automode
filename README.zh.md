@@ -90,13 +90,14 @@ node patches/dsh-permission-preset-icon.mjs
 ```text
 工具调用到达
   │
-  ├─ [pre-execute 门]（所有工具，第一道防线）
+  ├─ [pre-execute 门]（所有工具，第一道防线；auto-mode 会话，以及继承它的子会话）
   │    ① 只读工具 → 放行（除非命中 deny）
   │    ② deny 规则（正则）→ 硬拒绝
-  │    ③ allow 规则（前缀 glob）→ 放行
-  │    ④ 工作区内文件操作 → 放行（allowInsideWorkingDirectory）
-  │    ⑤ 升级意图 → 分类器预审
-  │    ⑥ 其余 → 放行
+  │    ③ 删除守卫（rm / unlink / shred / git clean -f / find -delete / del / Remove-Item）→ 硬拒绝，改用 `trash`
+  │    ④ allow 规则（前缀 glob）→ 放行
+  │    ⑤ 工作区内文件操作 → 放行（allowInsideWorkingDirectory）
+  │    ⑥ 升级意图 → 分类器预审
+  │    ⑦ 其余 → 放行
   │
   └─ [approval 瀑布]
        ① 散文 deny 规则 → 拒绝
@@ -111,7 +112,9 @@ node patches/dsh-permission-preset-icon.mjs
 
 > 🖱️ **可交互版本**：[docs/auto-mode-flow.zh.html](docs/auto-mode-flow.zh.html) —— 平移缩放、关系追踪、暗色模式。图表源数据：[`docs/auto-mode-flow.zh.workflow.json`](docs/auto-mode-flow.zh.workflow.json)。
 
-pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来不会触发 approval 瀑布的那些）。approval 瀑布只对真正需要沙箱升级的调用运行。pre-execute 门**仅对 auto-mode 会话生效**；在其他 preset（read-only / workspace-write / danger-full-access）下它是 no-op，不会与你所选沙箱冲突。
+pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来不会触发 approval 瀑布的那些）。approval 瀑布只对真正需要沙箱升级的调用运行。pre-execute 门**仅对 auto-mode 会话生效**；在其他 preset（read-only / workspace-write / danger-full-access）下它是 no-op，不会与你所选沙箱冲突。自 0.18.0 起，门也覆盖**继承 auto mode 的会话**：子代理或 AgentTeams worker 自己的 preset 为空时，只要沿 `parentSession` 链找到一层 auto-mode 祖先，该会话即受管辖。这类会话只跑确定性层——它们身后没有审批答复器，分类器不会被调用——被覆盖的第一次调用会在审计日志写一条 `pre-execute-inherited`。
+
+**永久删除是「直接拒绝」，不是「交给人审」。** `rm`、`unlink`、`shred`、`git rm`、`git clean -f…`、`find … -delete`、`rsync --delete*`、`del`/`rd /s`/`Remove-Item -Recurse`，以及把它们藏在 `sudo`/`env`/`xargs`/`sh -c` 或路径前缀后面的写法，都会在执行前被硬拒，拒绝理由让模型改用 `trash`（可恢复，仍在 allow 频带内）。这是确定性频带，所以即使命令发生在工作区内、根本不涉及审批，也照样拦下。两点后果值得知道：`rm -rf node_modules` 同样被拒（改用 `trash`）；守卫只看**会被执行**的文本——`sh -c`、`bash -lc`、`eval`、`busybox`、`su -c`、`find -exec` 以及 `$( … )` / 反引号替换都会被跟进，而把删除命令当普通参数引用（`echo "rm -rf x"`、`git commit -m "drop rm -rf"`）不算动作。
 
 ## 规则
 
@@ -121,6 +124,7 @@ pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来�
 
 - **`deny`** — 正则模式，硬拒绝。首个匹配生效。在所有检查之前求值。用于加密外泄、密钥、敏感目标、危险命令。**频带只匹配「操作」**（v0.15.1）：bash 扫命令原文、文件工具扫目标路径；参数是散文的工具（如 `subagent` 的 prompt、脚本正文）只受「操作形」内置模式约束——**提到某个敏感话题不等于处理它**，因此提及 `.env`/密钥/凭据主题的文档与审查不再被硬拒，而真正的凭据库文件名与内联密钥材料仍硬拒。
 - **`allow`** — 前缀 glob 模式，不调用任何 LLM 直接放行。在 deny 之后求值。用于你完全信任的常规命令。
+- **删除守卫**（内置，0.18.0）— 「工作原理」里那条永久删除频带。只读命令原文（绝不读 justification 散文），在 allow 规则之前执行，且无法从配置关掉；可恢复的替代品 `trash` 仍在白名单里。
 
 ### 分类器引导（散文，喂给 LLM）
 
@@ -169,7 +173,7 @@ pre-execute 门拦截**所有**工具调用（包括工作区沙箱内、本来�
       - /Users/<you>/Library/CloudStorage/OneDrive-<tenant>/Projects/<proj>/Proposal/
 ```
 
-只有被识别的写命令才会被信任；路径在 symlink 解析后匹配，`/Users/<you>/OneDrive - …` 软链与真实 `Library/CloudStorage/…` 路径都可用，且 `~`/`$HOME` 前缀会在匹配前展开（v0.13.0）。**不可恢复删除**（`rm`、`shred`、`unlink`）绝不会进入白名单；而经 `trash`（freedesktop 回收站）执行的**可恢复删除**可以（v0.13.0）——其目标会被提取，且**每一个**都必须解析到 allowPath 内，硬 `deny` 频带仍最先拒绝针对系统路径的 `trash`/`mv`。白名单目录内的 `git add`/`commit`/`push` 会把**仓库根**解析为写目标，因此对位于 allowPath 下的仓库做提交/推送也会跳过分类器（v0.11.1）。下面的裁决缓存修复仍然重要：即便没有 allowPath，你一旦显式授权某个动作，分类器也会带着你的意图重跑，而不是回放旧的缓存拒绝。
+只有被识别的写命令才会被信任；路径在 symlink 解析后匹配，`/Users/<you>/OneDrive - …` 软链与真实 `Library/CloudStorage/…` 路径都可用，且 `~`/`$HOME` 前缀会在匹配前展开（v0.13.0）。**不可恢复删除**（`rm`、`shred`、`unlink`）绝不会进入白名单——自 0.18.0 起由删除守卫直接拒绝；而经 `trash`（freedesktop 回收站）执行的**可恢复删除**可以（v0.13.0）——其目标会被提取，且**每一个**都必须解析到 allowPath 内，硬 `deny` 频带仍最先拒绝针对系统路径的 `trash`/`mv`。白名单目录内的 `git add`/`commit`/`push` 会把**仓库根**解析为写目标，因此对位于 allowPath 下的仓库做提交/推送也会跳过分类器（v0.11.1）。下面的裁决缓存修复仍然重要：即便没有 allowPath，你一旦显式授权某个动作，分类器也会带着你的意图重跑，而不是回放旧的缓存拒绝。
 
 **复合写命令（v0.11.0）**。临时文件→替换的导出三步曲（如 `DIR=…; cp a b_tmp && (trash b; true) && mv b_tmp "$DIR/b"`）现在会按段解析（含 `VAR=…` 赋值跟踪与 `$VAR` 展开），其目标仍能命中 `allowPaths`。`cd <dir>` 是受跟踪的良性导航命令——它更新有效工作目录（使后面的 `git add/commit/push` 据此解析仓库根），且不使快速路径失效（`cd -` 仍不可预测，回退分类器）。快速路径仍有守卫：复合命令若含副作用命令（`kill`、`pkill`、`rm`、`sh`、`bash`、网络/守护进程管理等）、命令替换（`` `…` ``、`$(…)`、`<(…)`）、文件重定向（`>file`、`>>file`、`2>file`）或写/良性集之外的任何命令，一律回退分类器，与之前行为一致。**fd-dup 重定向**（`2>&1`、`>&2`、`>&-`）不是文件写入，不使快速路径失效——所以 `git push … 2>&1 | tail` 仍可被白名单判定。复合内的**只读**工具（`echo`、`ls`、`cat`、`head` 等）随白名单快速路径搭车执行——一旦所有写目标都在白名单内，其副作用不再单独过分类器。写目标按**该段当时**的 cwd 解析，因此 `cd` 会被信任证明如实采纳：`cd` 进信任根内的相对写入仍走快速路径，而 `cd /elsewhere && cp a rel/path` 不再因为把 `rel/path` 按会话目录解析而蒙混过关（v0.15.3——此前这种不一致可被桥接为 `danger-full-access`）；展开后仍含未解析 `$VAR` 的目标（如命令内从未赋值的 `$TMPDIR`）则整条不再走快速路径，而不是去证明一个字面量路径。`mkdir` **自 v0.15.3 起不再搭车**：它会创建目录，因此其目标同样加入信任证明（全部须在信任根内）——此前 `git commit … && mkdir -p /elsewhere` 可以仅凭仓库根就被自动信任。`rm` 仍强制回退分类器；而 v0.13.0 起，`trash` 出现在复合命令中时其可恢复删除目标会加入目标集，与普通写目标一样接受白名单判定（全部须在信任根内，否则整体回退分类器）。改写历史的 git 命令（`reset --hard`、`clean`、`rebase`、`merge`）**刻意不**进入白名单信任。
 

@@ -90,13 +90,14 @@ Then restart `dsh web`.
 ```text
 Tool call arrives
   │
-  ├─ [pre-execute gate]  (all tools, first defense)
+  ├─ [pre-execute gate]  (all tools, first defense; auto-mode sessions and the subagents that inherit it)
   │    ① Read-only tools → allow (unless deny matched)
   │    ② Deny rules (regex) → hard reject
-  │    ③ Allow rules (prefix glob) → approve
-  │    ④ In-tree file ops → approve (allowInsideWorkingDirectory)
-  │    ⑤ Escalation intent → classifier pre-screen
-  │    ⑥ Everything else → pass through
+  │    ③ Deletion guard (rm / unlink / shred / git clean -f / find -delete / del / Remove-Item) → hard reject, use `trash`
+  │    ④ Allow rules (prefix glob) → approve
+  │    ⑤ In-tree file ops → approve (allowInsideWorkingDirectory)
+  │    ⑥ Escalation intent → classifier pre-screen
+  │    ⑦ Everything else → pass through
   │
   └─ [approval waterfall]
        ① Soft deny rules (prose) → reject
@@ -111,7 +112,9 @@ Tool call arrives
 
 > 🖱️ **Interactive version**: [docs/auto-mode-flow.html](docs/auto-mode-flow.html) — pan/zoom, relationship tracing, dark mode. Diagram source: [`docs/auto-mode-flow.workflow.json`](docs/auto-mode-flow.workflow.json).
 
-The pre-execute gate intercepts ALL tool calls (including those inside the workspace sandbox that would never trigger the approval waterfall). The approval waterfall only runs for calls that actually need sandbox escalation. The pre-execute gate only applies to **auto-mode** sessions; in other presets (read-only / workspace-write / danger-full-access) it is a no-op so it never contradicts the sandbox the user chose.
+The pre-execute gate intercepts ALL tool calls (including those inside the workspace sandbox that would never trigger the approval waterfall). The approval waterfall only runs for calls that actually need sandbox escalation. The pre-execute gate only applies to **auto-mode** sessions; in other presets (read-only / workspace-write / danger-full-access) it is a no-op so it never contradicts the sandbox the user chose. Since 0.18.0 the gate also covers **sessions that inherit auto mode**: a subagent or AgentTeams worker whose own preset is unset is governed when an ancestor session (via its `parentSession` chain) is in auto mode. Such sessions get the deterministic layers only — they have no approval answerer behind them, so the classifier is never asked — and the first covered call records a `pre-execute-inherited` line in the audit log.
+
+**Permanent deletion is rejected, not reviewed.** `rm`, `unlink`, `shred`, `git rm`, `git clean -f…`, `find … -delete`, `rsync --delete*`, `del`/`rd /s`/`Remove-Item -Recurse`, and the same commands hidden behind `sudo`/`env`/`xargs`/`sh -c` or a path prefix are hard-rejected before they run, and the rejection tells the model to use `trash` (recoverable, still allowlisted). This is a deterministic band, so it fires even when the command stays inside the workspace and no approval is involved. Two consequences worth knowing: `rm -rf node_modules` is rejected too (use `trash`), and the guard reads *executed* text only — `sh -c`, `bash -lc`, `eval`, `busybox`, `su -c`, `find -exec` and `$( … )` / backtick substitutions are followed, while a delete command quoted as an ordinary argument (`echo "rm -rf x"`, `git commit -m "drop rm -rf"`) is not treated as an action.
 
 ## Rules
 
@@ -121,6 +124,7 @@ The rule system has two layers:
 
 - **`deny`** — regex patterns that hard-reject. First match wins. Evaluated before everything else. Use for exfiltration, secrets, sensitive targets, dangerous commands. **The band matches only OPERATIONS** (v0.15.1): bash scans the command text and file tools scan their target paths; tools whose arguments are prose (a `subagent` prompt, a script body) are held only to the *operation-shaped* built-in patterns — **mentioning a sensitive topic is not handling it**, so documents and reviews that discuss env files or keys are no longer hard-rejected, while real credential-store filenames and inline key material still are.
 - **`allow`** — prefix-glob patterns that approve without any LLM call. Evaluated after deny. Use for routine commands you trust completely.
+- **Deletion guard** (built in, 0.18.0) — the permanent-deletion band described under [How it works](#how-it-works). It reads the command text only (never the justification prose), runs before the allow rules, and cannot be switched off from config; the recoverable replacement `trash` stays allowlisted.
 
 ### Classifier guidance (prose, fed to the LLM)
 
@@ -169,7 +173,7 @@ Configuration goes in your profile's `cordis.patch.yml`. Everything has defaults
       - /Users/<you>/Library/CloudStorage/OneDrive-<tenant>/Projects/<proj>/Proposal/
 ```
 
-Only recognized write-commands are trusted, and paths are matched after symlink resolution — both a `/Users/<you>/OneDrive - …` symlink and the real `Library/CloudStorage/…` path work, and `~`/`$HOME` prefixes expand before matching (v0.13.0). Irrecoverable deletion (`rm`, `shred`, `unlink`) is never allowlisted; a **recoverable** delete via `trash` (freedesktop recycle bin) IS (v0.13.0) — its targets are extracted and *every* one must resolve inside an allowPath, while the hard `deny` band still rejects `trash`/`mv` against system paths first. A `git add`/`commit`/`push` inside an allowlisted directory resolves its **repository root** as the write target, so committing/pushing a repo that lives under an allowPath skips the classifier too (v0.11.1). The verdict-cache fix below still matters: even without an `allowPath`, once you explicitly authorize an action the classifier re-runs with your intent instead of replaying a cached denial.
+Only recognized write-commands are trusted, and paths are matched after symlink resolution — both a `/Users/<you>/OneDrive - …` symlink and the real `Library/CloudStorage/…` path work, and `~`/`$HOME` prefixes expand before matching (v0.13.0). Irrecoverable deletion (`rm`, `shred`, `unlink`) is never allowlisted — since 0.18.0 it is rejected outright by the deletion guard; a **recoverable** delete via `trash` (freedesktop recycle bin) IS (v0.13.0) — its targets are extracted and *every* one must resolve inside an allowPath, while the hard `deny` band still rejects `trash`/`mv` against system paths first. A `git add`/`commit`/`push` inside an allowlisted directory resolves its **repository root** as the write target, so committing/pushing a repo that lives under an allowPath skips the classifier too (v0.11.1). The verdict-cache fix below still matters: even without an `allowPath`, once you explicitly authorize an action the classifier re-runs with your intent instead of replaying a cached denial.
 
 **Composite write-commands (v0.11.0).** A temp→swap export dance like `DIR=…; cp a b_tmp && (trash b; true) && mv b_tmp "$DIR/b"` is now parsed segment-by-segment (with `VAR=…` assignment tracking and `$VAR` expansion), so its destinations still hit `allowPaths`. `cd <dir>` is a tracked benign navigator — it updates the effective working directory (so a later `git add/commit/push` resolves its repo root from it) without invalidating the fast path (`cd -` stays unpredictable and falls back). The fast path stays guarded: a composite containing a side-effect command (`kill`, `pkill`, `rm`, `sh`, `bash`, network/daemon management, …), a command substitution (`` `…` `` or `$(…)`), a file redirection (`>file`, `>>file`, `2>file`), or any command outside the recognized write/benign set falls back to the classifier exactly as before. A descriptor-dup redirect (`2>&1`, `>&2`, `>&-`) is **not** a file write and does not invalidate the fast path — so `git push … 2>&1 | tail` is still allowlist-checked. Read-only utilities inside a composite (`echo`, `ls`, `cat`, `head`, …) ride along with the allowlisted write — their side effects are not re-reviewed once every write target is allowlisted. Write destinations are resolved against the cwd in effect **at that segment**, so a `cd` is honoured in the proof: a relative write after `cd`-ing inside a trusted root still takes the fast path, while `cd /elsewhere && cp a rel/path` no longer passes by resolving `rel/path` against the session directory (v0.15.3 — that mismatch could previously be bridged to `danger-full-access`), and a destination that still contains an unexpanded `$VAR` after expansion (a `$TMPDIR`-style variable that the command never assigns) refuses the fast path entirely rather than proving a literal path. `mkdir` **stopped riding along in v0.15.3**: it creates directories, so its targets join the proof (all of them must be inside the trusted roots) — before that, `git commit … && mkdir -p /elsewhere` could be auto-trusted on the strength of the repo root alone. `rm` still forces a classifier fallback, and — since v0.13.0, when `trash` appears in a composite its recoverable-delete targets join the destination set and are allowlist-checked like any write destination (all of them must be inside the trusted roots, else the whole composite falls back). History-rewriting git commands (`reset --hard`, `clean`, `rebase`, `merge`) are deliberately *not* allowlist-trusted.
 
@@ -273,8 +277,8 @@ When auto mode is active, the plugin shadows the approval-policy system prompt s
 src/
   index.ts         Main entry: preset management, approval answerer, breaker reset, commands, system-prompt shadowing
   config.ts        Config schema + $defaults mechanism + built-in rule lists
-  bands.ts         Deterministic band engine (deny regex + allow glob)
-  pre-execute.ts   Pre-execute gate (first defense; real-path trust, classifier pre-screen, breaker-trip hint)
+  bands.ts         Deterministic band engine (deny regex + allow glob + shell segments + deletion guard)
+  pre-execute.ts   Pre-execute gate (first defense; deny/allow bands, deletion guard, real-path trust, classifier pre-screen, breaker-trip hint)
   classifier.ts    Two-stage classifier (+ robust parser, reasoning effort, diagnostics)
   rules.ts         Prose rule matching for the classifier
   prompt.ts        Classifier prompt construction (<recent_user_intent> + intent weighting)
