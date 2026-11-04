@@ -18,6 +18,9 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 - `rm -rf node_modules` is rejected too. Deleting build directories is recoverable by reinstalling, but the command itself is not recoverable, so it takes `trash` like everything else.
 - The guard reads the executed command text only, never the justification prose: a reason that mentions deletion no longer influences the decision, and a delete command quoted as an ordinary argument (`echo "rm -rf x"`, `git commit -m "drop rm -rf"`) is not treated as an action.
 
+### Notes
+- **Scope of the guarantee.** A deletion whose command word appears literally in an executed position is rejected: direct commands, wrappers and their option values, shell payloads (`sh -c`, `bash -lc`, `find -exec`, `npx -c`), `$( … )`/backtick substitutions, heredocs piped into a shell, and text piped into an interpreter. Deletions that only exist at runtime are not visible to a text scan and are out of scope: language APIs (`fs.unlinkSync`, `os.remove`, `File.delete`), `awk 'BEGIN{system(...)}'`, a command word assembled by another program, and `docker exec … rm`.
+
 ### Fixed
 - A blocked deletion now always leaves an audit record. Previously neither a rejection nor the command itself produced a `decisions.jsonl` entry, so an irreversible delete could leave no trace.
 
@@ -165,6 +168,9 @@ All notable changes to **@log.li/dsh-automode** since the previous release (0.12
 - 注入会话的 auto-mode 指引现在写明 `trash` 是允许的删除方式，agent 在撞上拒绝之前就知道替代品。
 - `rm -rf node_modules` 同样被拒。重装即可恢复，但这条命令本身不可恢复，所以和其他删除一样走 `trash`。
 - 守卫只读**会被执行**的命令文本，绝不读 justification 散文：拒绝理由里提到删除不再影响判定，而把删除命令当普通参数引用（`echo "rm -rf x"`、`git commit -m "drop rm -rf"`）不算动作。
+
+### 说明
+- **保证的边界。** 删除命令词**字面出现在会被执行的位置**时一定被拒：直接命令、包装词及其取值选项、shell 载荷（`sh -c`、`bash -lc`、`find -exec`、`npx -c`）、`$( … )`/反引号替换、管道送进 shell 的 heredoc，以及管道送进解释器的文本。只在运行期才成形的删除文本扫描看不见，不在范围内：语言 API（`fs.unlinkSync`、`os.remove`、`File.delete`）、`awk 'BEGIN{system(...)}'`、由别的程序拼出的命令词、`docker exec … rm`。
 
 ### 修复
 - 被拦下的删除现在一定留审计记录。此前既不拒绝、也不写 `decisions.jsonl`，不可逆删除可以零留痕。
